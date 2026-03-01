@@ -43,6 +43,7 @@ impl InventorySource for SshConfigInventory {
                             source: self.path.clone(),
                             tags: HashMap::new(),
                             label: None,
+                            alias: None,
                         });
                     }
                     "hostname" => {

@@ -77,6 +77,7 @@ fn parse_ansible_host_line(line: &str, group: &str, source: &str) -> Option<Host
         source: source.to_string(),
         tags: HashMap::new(),
         label: None,
+        alias: None,
     })
 }
 

@@ -162,6 +162,7 @@ fn parse_ssh_args(alias: &str, args: &[String], source: &str) -> Option<Host> {
         source: source.to_string(),
         tags: HashMap::new(),
         label: None,
+        alias: None,
     })
 }
 

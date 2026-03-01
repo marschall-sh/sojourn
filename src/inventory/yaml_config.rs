@@ -52,6 +52,7 @@ impl InventorySource for YamlInventory {
                 source: expanded.clone(),
                 tags: h.tags,
                 label: None,
+                alias: None,
             })
             .collect())
     }
