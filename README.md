@@ -109,6 +109,15 @@ theme = "solarized-light"   # also: catppuccin-latte · rose-pine-dawn
 
 ---
 
+## Uninstall
+
+```bash
+rm ~/.local/bin/sojourn
+rm -rf ~/.config/sojourn/
+```
+
+---
+
 ## License
 
 MIT — see [LICENSE](LICENSE)
