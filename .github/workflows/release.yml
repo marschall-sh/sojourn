@@ -1,0 +1,119 @@
+name: Release
+
+# Triggers on any tag like v0.2.1, v1.0.0, etc.
+on:
+  push:
+    tags:
+      - 'v[0-9]*'
+
+permissions:
+  contents: write   # needed to create GitHub Releases
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Build matrix: macOS arm64 + Linux amd64 + Linux arm64 (musl, static)
+  # ─────────────────────────────────────────────────────────────────────────────
+  build:
+    name: Build · ${{ matrix.artifact }}
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Apple Silicon — native build on GitHub's M1 runner
+          - os: macos-14
+            target: aarch64-apple-darwin
+            artifact: sojourn-macos-arm64
+
+          # Linux x86-64 — statically linked via musl for maximum portability
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            artifact: sojourn-linux-amd64
+
+          # Linux arm64 — Graviton, Raspberry Pi 4/5, Oracle Cloud free tier
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+            artifact: sojourn-linux-arm64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      # Cache compiled dependencies to speed up subsequent runs (~2–3 min saved)
+      - name: Cache Cargo registry + build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      # musl-tools provides musl-gcc required for the musl target
+      - name: Install musl tools (Linux only)
+        if: runner.os == 'Linux'
+        run: sudo apt-get install -y musl-tools
+
+      - name: Build release binary
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Strip binary
+        run: strip target/${{ matrix.target }}/release/sojourn
+
+      # Package as .tar.gz with a flat "sojourn" binary inside
+      - name: Package
+        shell: bash
+        run: |
+          cp target/${{ matrix.target }}/release/sojourn sojourn
+          tar czf ${{ matrix.artifact }}.tar.gz sojourn
+          # SHA-256 checksum for verification
+          if command -v shasum &>/dev/null; then
+            shasum -a 256 ${{ matrix.artifact }}.tar.gz > ${{ matrix.artifact }}.tar.gz.sha256
+          else
+            sha256sum ${{ matrix.artifact }}.tar.gz > ${{ matrix.artifact }}.tar.gz.sha256
+          fi
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            ${{ matrix.artifact }}.tar.gz
+            ${{ matrix.artifact }}.tar.gz.sha256
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Create the GitHub Release and attach all binaries
+  # ─────────────────────────────────────────────────────────────────────────────
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: List artifacts (debug)
+        run: find artifacts -type f | sort
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          # Auto-generates release notes from PR/commit history
+          generate_release_notes: true
+          # Attach all tarballs + checksums
+          files: |
+            artifacts/sojourn-macos-arm64/sojourn-macos-arm64.tar.gz
+            artifacts/sojourn-macos-arm64/sojourn-macos-arm64.tar.gz.sha256
+            artifacts/sojourn-linux-amd64/sojourn-linux-amd64.tar.gz
+            artifacts/sojourn-linux-amd64/sojourn-linux-amd64.tar.gz.sha256
+            artifacts/sojourn-linux-arm64/sojourn-linux-arm64.tar.gz
+            artifacts/sojourn-linux-arm64/sojourn-linux-arm64.tar.gz.sha256
+          fail_on_unmatched_files: true

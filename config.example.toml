@@ -1,0 +1,92 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# sojourn — example configuration
+# Copy to ~/.config/sojourn/config.toml and adjust to your environment.
+# Run `sojourn setup` to generate this file interactively.
+# ─────────────────────────────────────────────────────────────────────────────
+
+[settings]
+# SSH user applied to any host that doesn't specify one
+default_user = "alice"
+
+# Extra flags passed to every ssh invocation (optional)
+# ssh_extra_args = "-o StrictHostKeyChecking=no"
+
+# Automatically connect when there is exactly one match
+connect_on_single_match = true
+
+# Dark themes:  default · tokyo-night · catppuccin · dracula · gruvbox · nord
+# Light themes: catppuccin-latte · solarized-light · rose-pine-dawn
+theme = "tokyo-night"
+
+# ── Inventory sources ─────────────────────────────────────────────────────────
+# Add as many sources as you like — sojourn merges them all into one list.
+
+# Your SSH config (active by default)
+[[inventory]]
+type = "ssh_config"
+path = "~/.ssh/config"
+
+# Ansible inventory files — glob patterns are supported
+# [[inventory]]
+# type = "ansible"
+# path = "~/repos/infrastructure/inventory/hosts_production"
+
+# [[inventory]]
+# type = "ansible"
+# path = "~/repos/infra-*/inventory/hosts_*"
+
+# Custom YAML inventory
+# [[inventory]]
+# type = "yaml"
+# path = "~/.config/sojourn/hosts.yaml"
+
+# ── IP → location labels ──────────────────────────────────────────────────────
+# Glob patterns (10.10.*) and CIDR notation (10.10.0.0/16) are both supported.
+# The matching label is shown next to the IP in the host list.
+
+[[ip_labels]]
+pattern = "10.0.*"
+label   = "Home Lab"
+
+[[ip_labels]]
+pattern = "10.10.0.0/16"
+label   = "Office VPN"
+
+[[ip_labels]]
+pattern = "172.16.*"
+label   = "Staging"
+
+[[ip_labels]]
+pattern = "192.168.*"
+label   = "Local Network"
+
+[[ip_labels]]
+pattern = "203.0.113.*"
+label   = "Cloud EU"
+
+# ── Jump host rules ───────────────────────────────────────────────────────────
+# Hosts matching host_pattern are automatically routed through jump_host.
+# Supports wildcards: *.internal, prod-*, db-* etc.
+
+# [[jump_hosts]]
+# host_pattern = "*.internal"
+# jump_host    = "bastion.example.com"
+# user         = "alice"
+
+# [[jump_hosts]]
+# host_pattern = "db-*"
+# jump_host    = "jump.example.com"
+
+# ── Per-host overrides ────────────────────────────────────────────────────────
+# Normally written by the TUI editor (press `e` on any host).
+# You can also set them manually here.
+
+# [[host_overrides]]
+# hostname  = "web-prod-01.example.com"
+# user      = "deploy"
+# label     = "primary web"
+
+# [[host_overrides]]
+# hostname  = "legacy-app.example.com"
+# user      = "root"
+# jump_host = "old-bastion.example.com"

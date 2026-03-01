@@ -1,0 +1,25 @@
+# Rust build artifacts — never commit these (they contain absolute paths)
+/target/
+
+# Cargo lock for binaries is fine to commit; uncomment to ignore it
+# Cargo.lock
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Editor / IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Environment / secrets
+.env
+*.pem
+*.key
+
+# sojourn runtime files (if ever written to repo dir during dev)
+*.log
