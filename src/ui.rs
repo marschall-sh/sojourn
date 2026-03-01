@@ -188,16 +188,15 @@ fn render_host_list(f: &mut Frame, app: &mut App, area: Rect) {
             Span::raw("  ")
         };
 
-        // Hostname — truncate to column width and apply fuzzy highlights
-        let display_name = truncate_str(&host.hostname, name_field_w.saturating_sub(1));
+        // NAME column — alias takes priority, then hostname (which may itself be an IP)
+        let name_str     = host.alias.as_deref().unwrap_or(&host.hostname);
+        let display_name = truncate_str(name_str, name_field_w.saturating_sub(1));
         let name_chars   = display_name.chars().count();
         let name_pad     = name_field_w.saturating_sub(name_chars);
         let name_spans   = highlight_text(&display_name, &app.query, app, t.fg, t.match_char);
 
-        // ADDRESS column — alias takes priority over IP
-        let ip_text    = host.alias.as_deref()
-            .or(host.ip.as_deref())
-            .unwrap_or("—");
+        // ADDRESS column — always the raw IP (or hostname if no IP known)
+        let ip_text    = host.ip.as_deref().unwrap_or(&host.hostname);
         let display_ip = truncate_str(ip_text, addr_field_w.saturating_sub(1));
 
         // Location label
