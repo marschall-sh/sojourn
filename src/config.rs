@@ -31,6 +31,8 @@ pub struct HostOverride {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub alias: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub jump_host: Option<String>,
 }
 

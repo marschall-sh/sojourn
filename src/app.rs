@@ -24,6 +24,7 @@ use crate::ui;
 #[derive(Debug, Clone, PartialEq)]
 pub enum EditField {
     User,
+    Alias,
     Label,
     JumpHost,
 }
@@ -31,7 +32,8 @@ pub enum EditField {
 impl EditField {
     pub fn next(&self) -> Self {
         match self {
-            EditField::User     => EditField::Label,
+            EditField::User     => EditField::Alias,
+            EditField::Alias    => EditField::Label,
             EditField::Label    => EditField::JumpHost,
             EditField::JumpHost => EditField::User,
         }
@@ -39,7 +41,8 @@ impl EditField {
     pub fn prev(&self) -> Self {
         match self {
             EditField::User     => EditField::JumpHost,
-            EditField::Label    => EditField::User,
+            EditField::Alias    => EditField::User,
+            EditField::Label    => EditField::Alias,
             EditField::JumpHost => EditField::Label,
         }
     }
@@ -50,6 +53,7 @@ impl EditField {
 pub struct EditState {
     pub host_idx: usize,       // index into App::hosts
     pub user_input: String,
+    pub alias_input: String,
     pub label_input: String,
     pub jump_input: String,
     pub active_field: EditField,
@@ -180,6 +184,7 @@ impl App {
         for host in &mut self.hosts {
             if let Some(ov) = overrides.iter().find(|o| o.hostname == host.hostname) {
                 if let Some(u) = &ov.user      { host.user      = Some(u.clone()); }
+                if let Some(a) = &ov.alias     { host.alias     = Some(a.clone()); }
                 if let Some(l) = &ov.label     { host.label     = Some(l.clone()); }
                 if let Some(j) = &ov.jump_host { host.jump_host = Some(j.clone()); }
             }
@@ -367,6 +372,7 @@ impl App {
                         (_, Backspace) => {
                             match state.active_field {
                                 EditField::User     => { state.user_input.pop(); }
+                                EditField::Alias    => { state.alias_input.pop(); }
                                 EditField::Label    => { state.label_input.pop(); }
                                 EditField::JumpHost => { state.jump_input.pop(); }
                             }
@@ -374,6 +380,7 @@ impl App {
                         (KM::CONTROL, Char('u')) => {
                             match state.active_field {
                                 EditField::User     => state.user_input.clear(),
+                                EditField::Alias    => state.alias_input.clear(),
                                 EditField::Label    => state.label_input.clear(),
                                 EditField::JumpHost => state.jump_input.clear(),
                             }
@@ -384,6 +391,7 @@ impl App {
                         (_, Char(c)) => {
                             match state.active_field {
                                 EditField::User     => state.user_input.push(c),
+                                EditField::Alias    => state.alias_input.push(c),
                                 EditField::Label    => state.label_input.push(c),
                                 EditField::JumpHost => state.jump_input.push(c),
                             }
@@ -402,6 +410,7 @@ impl App {
             self.edit_state = Some(EditState {
                 host_idx: *host_idx,
                 user_input:  host.user.clone().unwrap_or_default(),
+                alias_input: host.alias.clone().unwrap_or_default(),
                 label_input: host.label.clone().unwrap_or_default(),
                 jump_input:  host.jump_host.clone().unwrap_or_default(),
                 active_field: EditField::User,
@@ -419,6 +428,7 @@ impl App {
         // Apply in-memory immediately
         let host = &mut self.hosts[state.host_idx];
         host.user      = if state.user_input.is_empty()  { None } else { Some(state.user_input.trim().to_string()) };
+        host.alias     = if state.alias_input.is_empty() { None } else { Some(state.alias_input.trim().to_string()) };
         host.label     = if state.label_input.is_empty() { None } else { Some(state.label_input.trim().to_string()) };
         host.jump_host = if state.jump_input.is_empty()  { None } else { Some(state.jump_input.trim().to_string()) };
 
@@ -426,6 +436,7 @@ impl App {
         let ov = HostOverride {
             hostname:  host.hostname.clone(),
             user:      host.user.clone(),
+            alias:     host.alias.clone(),
             label:     host.label.clone(),
             jump_host: host.jump_host.clone(),
         };

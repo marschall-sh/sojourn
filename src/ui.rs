@@ -194,8 +194,10 @@ fn render_host_list(f: &mut Frame, app: &mut App, area: Rect) {
         let name_pad     = name_field_w.saturating_sub(name_chars);
         let name_spans   = highlight_text(&display_name, &app.query, app, t.fg, t.match_char);
 
-        // IP address — right-pad to addr_field_w
-        let ip_text    = host.ip.as_deref().unwrap_or("—");
+        // ADDRESS column — alias takes priority over IP
+        let ip_text    = host.alias.as_deref()
+            .or(host.ip.as_deref())
+            .unwrap_or("—");
         let display_ip = truncate_str(ip_text, addr_field_w.saturating_sub(1));
 
         // Location label
@@ -666,7 +668,7 @@ fn render_edit_overlay(f: &mut Frame, area: Rect, app: &App) {
     let host = &app.hosts[state.host_idx];
 
     let w  = 58u16.min(area.width.saturating_sub(4));
-    let h  = 14u16;
+    let h  = 16u16;
     let x  = (area.width.saturating_sub(w)) / 2;
     let y  = (area.height.saturating_sub(h)) / 2;
     let popup = Rect::new(x, y, w, h);
@@ -708,6 +710,8 @@ fn render_edit_overlay(f: &mut Frame, area: Rect, app: &App) {
     let lines = vec![
         Line::raw(""),
         field_line("User",      &state.user_input,  state.active_field == EditField::User),
+        Line::raw(""),
+        field_line("Alias",     &state.alias_input, state.active_field == EditField::Alias),
         Line::raw(""),
         field_line("Label",     &state.label_input, state.active_field == EditField::Label),
         Line::raw(""),

@@ -12,8 +12,10 @@ pub struct Host {
     pub groups: Vec<String>,
     pub source: String,
     pub tags: HashMap<String, String>,
-    /// Custom label set by the user via the TUI editor
+    /// Custom label shown dimly after location
     pub label: Option<String>,
+    /// Alias replaces the IP/address column when set
+    pub alias: Option<String>,
 }
 
 impl Host {
@@ -25,6 +27,9 @@ impl Host {
         }
         if let Some(label) = &self.label {
             parts.push(label.clone());
+        }
+        if let Some(alias) = &self.alias {
+            parts.push(alias.clone());
         }
         for group in &self.groups {
             parts.push(group.clone());
