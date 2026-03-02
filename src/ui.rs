@@ -150,6 +150,7 @@ fn render_host_list(f: &mut Frame, app: &mut App, area: Rect) {
 
     // ── Scroll adjustment ─────────────────────────────────────────────────────
     let list_height = list_area.height as usize;
+    app.list_page_size = list_height.max(1);   // expose to key handler for PgUp/PgDn
     let cursor      = app.list_cursor;
 
     if cursor < app.list_scroll {
@@ -615,6 +616,7 @@ fn render_help_overlay(f: &mut Frame, area: Rect, t: &Theme) {
         help_section("NAVIGATION", t),
         help_row("↑ / k", "Move cursor up", t),
         help_row("↓ / j", "Move cursor down", t),
+        help_row("PgUp / PgDn", "Jump one page up or down", t),
         help_row("Tab", "Switch focus search ↔ list", t),
         Line::raw(""),
         help_section("CONNECTIONS", t),

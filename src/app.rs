@@ -76,6 +76,8 @@ pub struct App {
     pub query: String,
     pub list_cursor: usize,
     pub list_scroll: usize,
+    /// Visible list height — updated each frame by ui.rs, used for PgUp/PgDn
+    pub list_page_size: usize,
     pub multi_selected: HashSet<usize>,
     pub mode: Mode,
     pub edit_state: Option<EditState>,
@@ -95,6 +97,7 @@ impl App {
             query: initial_query,
             list_cursor: 0,
             list_scroll: 0,
+            list_page_size: 20,
             multi_selected: HashSet::new(),
             mode: Mode::Search,
             edit_state: None,
@@ -190,6 +193,9 @@ impl App {
             }
         }
 
+        // Remove noise and duplicates
+        self.hosts = clean_hosts(std::mem::take(&mut self.hosts));
+
         Ok(())
     }
 
@@ -223,6 +229,15 @@ impl App {
         if self.list_cursor + 1 < self.filtered.len() {
             self.list_cursor += 1;
         }
+    }
+
+    pub fn move_page_up(&mut self) {
+        self.list_cursor = self.list_cursor.saturating_sub(self.list_page_size);
+    }
+
+    pub fn move_page_down(&mut self) {
+        let max = self.filtered.len().saturating_sub(1);
+        self.list_cursor = (self.list_cursor + self.list_page_size).min(max);
     }
 
     pub fn toggle_multi_select(&mut self) {
@@ -303,6 +318,14 @@ impl App {
                     self.mode = Mode::Navigate;
                     self.move_up();
                 }
+                (_, PageDown) => {
+                    self.mode = Mode::Navigate;
+                    self.move_page_down();
+                }
+                (_, PageUp) => {
+                    self.mode = Mode::Navigate;
+                    self.move_page_up();
+                }
                 (_, Enter) => {
                     if !self.filtered.is_empty() {
                         self.execute_ssh_and_return(terminal)?;
@@ -330,6 +353,12 @@ impl App {
                 }
                 (_, Up) | (_, Char('k')) => {
                     self.move_up();
+                }
+                (_, PageDown) => {
+                    self.move_page_down();
+                }
+                (_, PageUp) => {
+                    self.move_page_up();
                 }
                 (_, Enter) => {
                     self.execute_ssh_and_return(terminal)?;
@@ -461,9 +490,19 @@ impl App {
 
             println!("\r\n\x1b[1;36m⚡ Connecting to {} ...\x1b[0m\r\n", host.hostname);
 
-            let _ = self.ssh_connect(&host);
+            let exit_status = self.ssh_connect(&host);
 
-            println!("\r\n\x1b[2m[Disconnected. Returning to sojourn...]\x1b[0m\r\n");
+            // If SSH exited immediately (e.g. host key check failed / changed),
+            // pause so the user can read the error before the TUI redraws over it.
+            let quick_exit = exit_status.as_ref()
+                .map(|s| !s.success())
+                .unwrap_or(true);
+            if quick_exit {
+                println!("\r\n\x1b[2m[Press any key to return to sojourn...]\x1b[0m");
+                let _ = std::io::stdin().read_line(&mut String::new());
+            } else {
+                println!("\r\n\x1b[2m[Disconnected. Returning to sojourn...]\x1b[0m\r\n");
+            }
 
             // Re-enter TUI
             enable_raw_mode()?;
@@ -477,7 +516,7 @@ impl App {
         Ok(())
     }
 
-    fn ssh_connect(&self, host: &Host) -> Result<()> {
+    fn ssh_connect(&self, host: &Host) -> Result<std::process::ExitStatus> {
         let mut args: Vec<String> = Vec::new();
 
         if let Some(jump) = &host.jump_host {
@@ -503,9 +542,8 @@ impl App {
 
         args.push(host.connect_target());
 
-        Command::new("ssh").args(&args).status()?;
-
-        Ok(())
+        let status = Command::new("ssh").args(&args).status()?;
+        Ok(status)
     }
 
     fn open_config_in_editor<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> Result<()> {
@@ -542,6 +580,54 @@ impl App {
 
         Ok(())
     }
+}
+
+/// Remove noise entries and deduplicate hosts after loading all inventories.
+fn clean_hosts(hosts: Vec<crate::inventory::Host>) -> Vec<crate::inventory::Host> {
+    use std::collections::HashSet;
+
+    // Hostnames/IPs that are never useful
+    const NOISE: &[&str] = &[
+        "127.0.0.1", "::1", "localhost", "localhost.localdomain",
+        "0.0.0.0", "255.255.255.255",
+    ];
+
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut out = Vec::with_capacity(hosts.len());
+
+    for host in hosts {
+        // Drop loopback / wildcard / obviously useless entries
+        let hostname_lc = host.hostname.to_lowercase();
+        if NOISE.contains(&hostname_lc.as_str()) { continue; }
+        if let Some(ip) = &host.ip {
+            if NOISE.contains(&ip.as_str()) { continue; }
+        }
+
+        // Drop wildcard SSH config patterns (Host * or Host *.example.com)
+        if host.hostname.contains('*') || host.hostname.contains('?') { continue; }
+
+        // Drop entries that are just a bare hostname with no IP and no useful info —
+        // keep them only if they have at least a port, user, jump, or look like an FQDN/IP
+        let has_useful_addr = host.ip.is_some()
+            || host.port.is_some()
+            || host.jump_host.is_some()
+            || host.user.is_some()
+            || host.hostname.contains('.')
+            || host.hostname.parse::<std::net::IpAddr>().is_ok();
+        if !has_useful_addr { continue; }
+
+        // Dedup key: prefer ip over hostname to catch same host under different names
+        let dedup_key = format!(
+            "{}|{}",
+            host.ip.as_deref().unwrap_or(&host.hostname),
+            host.user.as_deref().unwrap_or("")
+        );
+        if !seen.insert(dedup_key) { continue; }
+
+        out.push(host);
+    }
+
+    out
 }
 
 fn glob_match(pattern: &str, s: &str) -> bool {

@@ -913,11 +913,15 @@ fn default_ip_labels() -> Vec<IpLabel> {
 
 /// Write config to the default path, creating parent dirs as needed.
 pub fn write_config(config: &Config) -> anyhow::Result<std::path::PathBuf> {
+    use std::os::unix::fs::PermissionsExt;
+
     let home = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("Cannot find home directory"))?;
     let config_dir = home.join(".config/sojourn");
     std::fs::create_dir_all(&config_dir)?;
     let config_path = config_dir.join("config.toml");
     let content = toml::to_string_pretty(config)?;
     std::fs::write(&config_path, content)?;
+    // Restrict to owner read/write only (contains host inventory paths)
+    std::fs::set_permissions(&config_path, std::fs::Permissions::from_mode(0o600))?;
     Ok(config_path)
 }
