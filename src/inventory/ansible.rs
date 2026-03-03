@@ -140,8 +140,14 @@ fn parse_yaml_ansible_inventory(content: &str, group: &str, source: &str, hosts:
         let indent  = line.len() - line.trim_start().len();
         let trimmed = line.trim();
 
-        // Skip document markers and known structural keys
-        if matches!(trimmed, "---" | "all:" | "hosts:" | "ungrouped:" | "children:" | "vars:") {
+        // Skip document markers and pure structural keys.
+        // `hosts:` is special: it introduces a new hostname block at an unknown
+        // indent, so reset host_indent to let the next bare key establish it.
+        if matches!(trimmed, "---" | "all:" | "ungrouped:" | "children:" | "vars:") {
+            continue;
+        }
+        if trimmed == "hosts:" {
+            host_indent = None; // entering a new hosts: block — re-learn indent
             continue;
         }
 
