@@ -37,7 +37,7 @@ struct Cli {
     command: Option<Commands>,
 
     /// Initial search query (space-separated keywords)
-    #[arg(value_name = "QUERY", conflicts_with = "command")]
+    #[arg(value_name = "QUERY")]
     query: Vec<String>,
 
     /// Path to config file (overrides default ~/.config/sojourn/config.toml)
