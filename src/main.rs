@@ -43,6 +43,10 @@ struct Cli {
     /// Path to config file (overrides default ~/.config/sojourn/config.toml)
     #[arg(short, long, value_name = "FILE", global = true)]
     config: Option<String>,
+
+    /// Exit sojourn after the SSH session ends (overrides config setting)
+    #[arg(short = 'x', long = "exit-after-connect")]
+    exit_after_connect: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -85,7 +89,7 @@ fn main() -> Result<()> {
                 run_wizard(false, None)?;
             }
             let initial_query = cli.query.join(" ");
-            run_main_tui(cli.config.as_deref(), initial_query)
+            run_main_tui(cli.config.as_deref(), initial_query, cli.exit_after_connect)
         }
     }
 }
@@ -125,8 +129,12 @@ fn run_wizard(force: bool, _config_path: Option<&str>) -> Result<()> {
     }
 }
 
-fn run_main_tui(config_path: Option<&str>, initial_query: String) -> Result<()> {
-    let config = Config::load(config_path)?;
+fn run_main_tui(config_path: Option<&str>, initial_query: String, exit_after_connect: bool) -> Result<()> {
+    let mut config = Config::load(config_path)?;
+    // CLI flag --exit-after-connect overrides config setting
+    if exit_after_connect {
+        config.settings.exit_after_connect = true;
+    }
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();

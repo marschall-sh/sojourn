@@ -42,6 +42,9 @@ pub struct Settings {
     pub ssh_extra_args: Option<String>,
     #[serde(default = "default_true")]
     pub connect_on_single_match: bool,
+    /// Exit sojourn after the SSH session ends instead of returning to the TUI
+    #[serde(default = "default_false")]
+    pub exit_after_connect: bool,
     /// Name of the color theme: "default", "tokyo-night", "catppuccin", "dracula", "gruvbox", "nord"
     #[serde(default = "default_theme")]
     pub theme: String,
@@ -49,6 +52,10 @@ pub struct Settings {
 
 fn default_true() -> bool {
     true
+}
+
+fn default_false() -> bool {
+    false
 }
 
 fn default_theme() -> String {
@@ -61,6 +68,7 @@ impl Default for Settings {
             default_user: None,
             ssh_extra_args: None,
             connect_on_single_match: true,
+            exit_after_connect: false,
             theme: default_theme(),
         }
     }

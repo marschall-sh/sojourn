@@ -497,21 +497,30 @@ impl App {
             let quick_exit = exit_status.as_ref()
                 .map(|s| !s.success())
                 .unwrap_or(true);
-            if quick_exit {
-                println!("\r\n\x1b[2m[Press any key to return to sojourn...]\x1b[0m");
-                let _ = std::io::stdin().read_line(&mut String::new());
-            } else {
-                println!("\r\n\x1b[2m[Disconnected. Returning to sojourn...]\x1b[0m\r\n");
-            }
 
-            // Re-enter TUI
-            enable_raw_mode()?;
-            execute!(
-                std::io::stdout(),
-                EnterAlternateScreen,
-                EnableMouseCapture
-            )?;
-            terminal.clear()?;
+            if self.config.settings.exit_after_connect {
+                // Exit sojourn entirely — just print a newline and return
+                if quick_exit {
+                    println!("\r\n\x1b[2m[Press any key to exit...]\x1b[0m");
+                    let _ = std::io::stdin().read_line(&mut String::new());
+                }
+                self.should_quit = true;
+            } else {
+                if quick_exit {
+                    println!("\r\n\x1b[2m[Press any key to return to sojourn...]\x1b[0m");
+                    let _ = std::io::stdin().read_line(&mut String::new());
+                } else {
+                    println!("\r\n\x1b[2m[Disconnected. Returning to sojourn...]\x1b[0m\r\n");
+                }
+                // Re-enter TUI
+                enable_raw_mode()?;
+                execute!(
+                    std::io::stdout(),
+                    EnterAlternateScreen,
+                    EnableMouseCapture
+                )?;
+                terminal.clear()?;
+            }
         }
         Ok(())
     }

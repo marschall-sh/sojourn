@@ -14,6 +14,10 @@ default_user = "alice"
 # Automatically connect when there is exactly one match
 connect_on_single_match = true
 
+# Exit sojourn after the SSH session ends instead of returning to the TUI
+# Can also be set per-session with: sojourn --exit-after-connect  (or -x)
+exit_after_connect = false
+
 # Dark themes:  default · tokyo-night · catppuccin · dracula · gruvbox · nord
 # Light themes: catppuccin-latte · solarized-light · rose-pine-dawn
 theme = "tokyo-night"
