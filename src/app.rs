@@ -208,9 +208,11 @@ impl App {
             self.filtered = self.search_engine.search(&self.query, &self.hosts);
         }
 
-        if self.list_cursor >= self.filtered.len() {
-            self.list_cursor = self.filtered.len().saturating_sub(1);
-        }
+        // Always reset cursor and scroll to the top when the filter changes so
+        // that list_scroll (which persists across renders) never causes the view
+        // to land in the middle of a short result set, showing only 1 item.
+        self.list_cursor = 0;
+        self.list_scroll = 0;
     }
 
     pub fn selected_host(&self) -> Option<&Host> {
