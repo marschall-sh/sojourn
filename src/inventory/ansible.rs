@@ -98,78 +98,92 @@ fn parse_ini_ansible_inventory(content: &str, group: &str, source: &str, hosts: 
 ///         ansible_host: 10.0.0.1
 ///         ansible_user: deploy
 fn parse_yaml_ansible_inventory(content: &str, group: &str, source: &str, hosts: &mut Vec<Host>) {
-    // Simple line-by-line parser — covers the common flat structure
-    // without pulling in a full YAML dependency for this path
-    let mut current_hostname: Option<String> = None;
-    let mut current_ip: Option<String> = None;
-    let mut current_user: Option<String> = None;
-    let mut current_port: Option<u16> = None;
-    let mut current_indent: usize = 0;
+    // Line-by-line YAML parser for Ansible inventory files.
+    //
+    // Key design: we track `host_indent` — the indent level at which hostname
+    // entries appear (e.g. 4 spaces under "all: > hosts:"). A bare `key:` is
+    // only treated as a new hostname when its indent EQUALS host_indent.
+    // Keys at deeper indentation (like `internal_ip:`, `external_ip:`) are
+    // variables belonging to the current host and are simply ignored unless
+    // they are ansible_host/user/port.
 
-    let flush = |hn: &mut Option<String>, ip: &mut Option<String>,
-                  user: &mut Option<String>, port: &mut Option<u16>,
-                  hosts: &mut Vec<Host>| {
-        if let Some(hostname) = hn.take() {
-            hosts.push(Host {
-                hostname,
-                ip: ip.take(),
-                user: user.take(),
-                port: port.take(),
-                identity_file: None,
-                jump_host: None,
-                groups: vec![group.to_string()],
-                source: source.to_string(),
-                tags: std::collections::HashMap::new(),
-                label: None,
-                alias: None,
-            });
-        }
-        *ip = None; *user = None; *port = None;
-    };
+    const STRUCTURAL: &[&str] = &["all", "hosts", "children", "vars", "ungrouped"];
+
+    let mut current_hostname: Option<String> = None;
+    let mut current_ip:       Option<String> = None;
+    let mut current_user:     Option<String> = None;
+    let mut current_port:     Option<u16>    = None;
+    let mut host_indent:      Option<usize>  = None; // locked-in hostname indent level
+
+    macro_rules! flush {
+        () => {
+            if let Some(hostname) = current_hostname.take() {
+                hosts.push(Host {
+                    hostname,
+                    ip:            current_ip.take(),
+                    user:          current_user.take(),
+                    port:          current_port.take(),
+                    identity_file: None,
+                    jump_host:     None,
+                    groups:        vec![group.to_string()],
+                    source:        source.to_string(),
+                    tags:          std::collections::HashMap::new(),
+                    label:         None,
+                    alias:         None,
+                });
+            }
+        };
+    }
 
     for line in content.lines() {
         if line.trim().is_empty() || line.trim().starts_with('#') { continue; }
-        let indent = line.len() - line.trim_start().len();
+        let indent  = line.len() - line.trim_start().len();
         let trimmed = line.trim();
 
-        // Skip YAML document markers and top-level structural keys
-        if trimmed == "---" || trimmed == "all:" || trimmed == "hosts:"
-            || trimmed.ends_with(':') && !trimmed.contains(' ')
-            && ["ungrouped:", "children:", "vars:"].contains(&trimmed) {
+        // Skip document markers and known structural keys
+        if matches!(trimmed, "---" | "all:" | "hosts:" | "ungrouped:" | "children:" | "vars:") {
             continue;
         }
 
-        // A key: value pair
-        if let Some(colon) = trimmed.find(':') {
-            let key = trimmed[..colon].trim();
-            let val = trimmed[colon + 1..].trim();
+        let Some(colon) = trimmed.find(':') else { continue };
+        let key = trimmed[..colon].trim();
+        let val = trimmed[colon + 1..].trim();
 
+        if val.is_empty() {
+            // Bare `key:` — is this a hostname or an empty host variable?
+            //
+            // It's a hostname if:
+            //   (a) we haven't locked in a host_indent yet, OR
+            //   (b) this indent == host_indent (same level as other hostnames)
+            //
+            // It is NOT a hostname if indent > host_indent (it's a variable
+            // like `external_ip:` that happens to have no value).
+            let is_hostname_level = match host_indent {
+                None     => true,
+                Some(hi) => indent == hi,
+            };
+
+            if is_hostname_level
+                && !STRUCTURAL.contains(&key)
+                && key.chars().next().map(|c| c.is_alphanumeric() || c == '_' || c == '-').unwrap_or(false)
+            {
+                flush!();
+                current_hostname = Some(key.to_string());
+                host_indent      = Some(indent);
+            }
+            // else: empty variable for current host — ignore
+        } else {
+            // Key-value pair — only care about ansible_ vars
             match key {
-                "ansible_host" if !val.is_empty() => { current_ip = Some(val.to_string()); }
-                "ansible_user" if !val.is_empty() => { current_user = Some(val.to_string()); }
-                "ansible_port" if !val.is_empty() => { current_port = val.parse().ok(); }
-                _ if val.is_empty() => {
-                    // A bare key: with no value — could be a hostname entry
-                    // Only treat as hostname if it's at a deeper indent than "hosts:"
-                    // and doesn't look like a structural key
-                    if indent > current_indent || current_hostname.is_none() {
-                        flush(&mut current_hostname, &mut current_ip,
-                              &mut current_user, &mut current_port, hosts);
-                        // Heuristic: if key looks like a hostname (has dot or alphanum)
-                        if !["all", "hosts", "children", "vars", "ungrouped"].contains(&key)
-                            && key.chars().next().map(|c| c.is_alphanumeric()).unwrap_or(false)
-                        {
-                            current_hostname = Some(key.to_string());
-                            current_indent = indent;
-                        }
-                    }
-                }
+                "ansible_host" => { current_ip   = Some(val.to_string()); }
+                "ansible_user" => { current_user = Some(val.to_string()); }
+                "ansible_port" => { current_port = val.parse().ok(); }
                 _ => {}
             }
         }
     }
-    flush(&mut current_hostname, &mut current_ip,
-          &mut current_user, &mut current_port, hosts);
+
+    flush!();
 }
 
 fn extract_group_from_path(path: &Path) -> String {
