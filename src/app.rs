@@ -48,10 +48,9 @@ impl EditField {
     }
 }
 
-/// State for the host-edit overlay
 #[derive(Debug, Clone)]
 pub struct EditState {
-    pub host_idx: usize,       // index into App::hosts
+    pub host_idx: usize,
     pub user_input: String,
     pub alias_input: String,
     pub label_input: String,
@@ -71,12 +70,10 @@ pub struct App {
     pub config: Config,
     pub theme: &'static Theme,
     pub hosts: Vec<Host>,
-    /// (index into self.hosts, fuzzy score)
     pub filtered: Vec<(usize, i64)>,
     pub query: String,
     pub list_cursor: usize,
     pub list_scroll: usize,
-    /// Visible list height — updated each frame by ui.rs, used for PgUp/PgDn
     pub list_page_size: usize,
     pub multi_selected: HashSet<usize>,
     pub mode: Mode,
@@ -208,9 +205,6 @@ impl App {
             self.filtered = self.search_engine.search(&self.query, &self.hosts);
         }
 
-        // Always reset cursor and scroll to the top when the filter changes so
-        // that list_scroll (which persists across renders) never causes the view
-        // to land in the middle of a short result set, showing only 1 item.
         self.list_cursor = 0;
         self.list_scroll = 0;
     }
@@ -376,11 +370,9 @@ impl App {
                 (KM::CONTROL, Char('d')) => {
                     self.multi_selected.clear();
                 }
-                // Open config in $EDITOR
                 (_, Char('c')) => {
                     self.open_config_in_editor(terminal)?;
                 }
-                // Open host edit overlay
                 (_, Char('e')) => {
                     self.open_edit_overlay();
                 }
@@ -463,7 +455,6 @@ impl App {
         host.label     = if state.label_input.is_empty() { None } else { Some(state.label_input.trim().to_string()) };
         host.jump_host = if state.jump_input.is_empty()  { None } else { Some(state.jump_input.trim().to_string()) };
 
-        // Persist to config
         let ov = HostOverride {
             hostname:  host.hostname.clone(),
             user:      host.user.clone(),
@@ -579,7 +570,6 @@ impl App {
             .status()
             .ok();
 
-        // Reload inventory after editing
         self.hosts.clear();
         self.load_inventory().ok();
         self.update_filter();

@@ -21,8 +21,6 @@ pub struct Config {
     pub host_overrides: Vec<HostOverride>,
 }
 
-/// A user-defined override for a specific host, persisted in config.toml.
-/// Overrides are matched by hostname and merged on top of inventory data.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HostOverride {
     pub hostname: String,

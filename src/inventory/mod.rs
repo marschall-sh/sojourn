@@ -12,14 +12,11 @@ pub struct Host {
     pub groups: Vec<String>,
     pub source: String,
     pub tags: HashMap<String, String>,
-    /// Custom label shown dimly after location
     pub label: Option<String>,
-    /// Alias replaces the IP/address column when set
     pub alias: Option<String>,
 }
 
 impl Host {
-    /// Build a combined string used for fuzzy matching
     pub fn search_string(&self) -> String {
         let mut parts = vec![self.hostname.clone()];
         if let Some(ip) = &self.ip {

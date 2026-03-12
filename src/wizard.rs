@@ -1,9 +1,3 @@
-/// First-run setup wizard.
-///
-/// Shown automatically when no config file exists, or when the user runs
-/// `sojourn setup`. Runs a background inventory scan while displaying a live
-/// progress screen, then lets the user review/toggle discovered sources,
-/// optionally add IP labels, and finally writes ~/.config/sojourn/config.toml.
 use std::io;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -25,8 +19,6 @@ use ratatui::{
 use crate::config::{Config, InventoryConfig, IpLabel, Settings};
 use crate::discovery::{discover_async, DiscoveredSource, SCAN_TIMEOUT};
 
-// ─────────────────────────────────────────────────────────────────────────────
-
 const C_CYAN: Color = Color::Cyan;
 const C_YELLOW: Color = Color::Yellow;
 const C_GREEN: Color = Color::Green;
@@ -36,21 +28,13 @@ const C_WHITE: Color = Color::White;
 const C_RED: Color = Color::Red;
 const C_DIM: Color = Color::Rgb(80, 80, 80);
 
-// ─────────────────────────────────────────────────────────────────────────────
-
 #[derive(Debug, Clone, PartialEq)]
 enum WizardStep {
-    /// Background scan running, showing spinner + live results
     Scanning,
-    /// Scan done (or timed out), user reviews sources
     ReviewSources,
-    /// User is typing a manual path to add
     ManualAdd,
-    /// Optional: add IP range labels
     IpLabels,
-    /// Typing a new IP label entry
     AddIpLabel,
-    /// Done — config written, ready to launch
     Done,
 }
 
@@ -77,10 +61,8 @@ pub struct Wizard {
     scan_done: bool,
     cursor: usize,
     spinner_tick: usize,
-    // manual add
     manual_input: String,
     manual_error: Option<String>,
-    // ip labels
     ip_labels: Vec<IpLabel>,
     ip_label_cursor: usize,
     label_entry: Option<IpLabelEntry>,
@@ -104,8 +86,6 @@ impl Wizard {
         }
     }
 
-    /// Run the wizard to completion. Returns the resulting Config on success,
-    /// or None if the user quit without saving.
     pub fn run(mut self) -> anyhow::Result<Option<Config>> {
         enable_raw_mode()?;
         let mut stdout = io::stdout();
@@ -131,7 +111,6 @@ impl Wizard {
         terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     ) -> anyhow::Result<Option<Config>> {
         loop {
-            // Poll for new scan results (non-blocking)
             self.drain_scan_results();
 
             terminal.draw(|f| self.render(f))?;
@@ -140,7 +119,6 @@ impl Wizard {
                 return Ok(Some(self.build_config()));
             }
 
-            // Use a short poll timeout so the spinner animates smoothly
             if event::poll(Duration::from_millis(80))? {
                 if let Event::Key(key) = event::read()? {
                     if let Some(result) = self.handle_key(key)? {
@@ -149,13 +127,9 @@ impl Wizard {
                 }
             }
 
-            // Advance spinner
             self.spinner_tick = self.spinner_tick.wrapping_add(1);
 
-            // Auto-advance from Scanning to ReviewSources when scan finishes
-            if self.step == WizardStep::Scanning
-                && self.scan_done
-            {
+            if self.step == WizardStep::Scanning && self.scan_done {
                 self.step = WizardStep::ReviewSources;
                 self.cursor = 0;
             }
@@ -170,7 +144,6 @@ impl Wizard {
             loop {
                 match rx.try_recv() {
                     Ok(src) => {
-                        // Deduplicate by config path
                         let already = self.sources.iter().any(|s| {
                             config_path(&s.config) == config_path(&src.config)
                         });
@@ -186,7 +159,6 @@ impl Wizard {
                     }
                 }
             }
-            // Force-finish after timeout even if thread hasn't disconnected yet
             if self.scan_start.elapsed() >= SCAN_TIMEOUT + Duration::from_millis(500) {
                 self.scan_done = true;
                 self.scan_rx = None;
@@ -202,25 +174,21 @@ impl Wizard {
         use KeyModifiers as KM;
 
         match (&self.step.clone(), key.code) {
-            // ── Quit from anywhere ────────────────────────────────────────
             (_, Char('c')) if key.modifiers.contains(KM::CONTROL) => {
-                return Ok(Some(None)); // user quit
+                return Ok(Some(None));
             }
 
-            // ── Scanning: skip wait ───────────────────────────────────────
             (WizardStep::Scanning, Enter) | (WizardStep::Scanning, Char(' ')) => {
                 self.scan_done = true;
                 self.step = WizardStep::ReviewSources;
             }
 
-            // ── ReviewSources ─────────────────────────────────────────────
             (WizardStep::ReviewSources, Up) | (WizardStep::ReviewSources, Char('k')) => {
                 if self.cursor > 0 {
                     self.cursor -= 1;
                 }
             }
             (WizardStep::ReviewSources, Down) | (WizardStep::ReviewSources, Char('j')) => {
-                // +1 for the "Add manually" row
                 if self.cursor < self.sources.len() {
                     self.cursor += 1;
                 }
@@ -232,22 +200,18 @@ impl Wizard {
             }
             (WizardStep::ReviewSources, Enter) => {
                 if self.cursor == self.sources.len() {
-                    // "Add manually" row
                     self.step = WizardStep::ManualAdd;
                     self.manual_input.clear();
                     self.manual_error = None;
                 } else {
-                    // Move to next step
                     self.step = WizardStep::IpLabels;
                     self.ip_label_cursor = 0;
                 }
             }
             (WizardStep::ReviewSources, Char('n')) => {
-                // Skip to done without IP labels
                 self.step = WizardStep::Done;
             }
 
-            // ── ManualAdd ─────────────────────────────────────────────────
             (WizardStep::ManualAdd, Esc) => {
                 self.step = WizardStep::ReviewSources;
             }
@@ -262,7 +226,6 @@ impl Wizard {
                 self.manual_error = None;
             }
 
-            // ── IpLabels ──────────────────────────────────────────────────
             (WizardStep::IpLabels, Up) | (WizardStep::IpLabels, Char('k')) => {
                 if self.ip_label_cursor > 0 {
                     self.ip_label_cursor -= 1;
@@ -283,7 +246,6 @@ impl Wizard {
             }
             (WizardStep::IpLabels, Enter) => {
                 if self.ip_label_cursor == self.ip_labels.len() {
-                    // "Add new" row — open inline editor
                     self.label_entry = Some(IpLabelEntry {
                         pattern: String::new(),
                         label: String::new(),
@@ -293,7 +255,6 @@ impl Wizard {
                     });
                     self.step = WizardStep::AddIpLabel;
                 } else {
-                    // Done button
                     self.step = WizardStep::Done;
                 }
             }
@@ -301,7 +262,6 @@ impl Wizard {
                 self.step = WizardStep::Done;
             }
 
-            // ── AddIpLabel ────────────────────────────────────────────────
             (WizardStep::AddIpLabel, Esc) => {
                 self.label_entry = None;
                 self.step = WizardStep::IpLabels;
@@ -348,7 +308,6 @@ impl Wizard {
         }
         let expanded = shellexpand::tilde(&raw).to_string();
 
-        // Determine type
         let (config, type_label) = if expanded.contains('*') {
             (InventoryConfig::Ansible { path: expanded.clone() }, "ansible")
         } else if expanded.ends_with(".yaml") || expanded.ends_with(".yml") {
@@ -357,7 +316,6 @@ impl Wizard {
             (InventoryConfig::Ansible { path: format!("{}*/hosts_*", expanded.trim_end_matches('/').to_string() + "/") }, "ansible")
         };
 
-        // Quick probe
         use crate::inventory::InventorySource;
         let count = match &config {
             InventoryConfig::Ansible { path } => {
@@ -421,12 +379,9 @@ impl Wizard {
         }
     }
 
-    // ── Rendering ─────────────────────────────────────────────────────────────
-
     fn render(&self, f: &mut Frame) {
         let area = f.area();
 
-        // Centered popup
         let w = 72u16.min(area.width.saturating_sub(4));
         let h = 36u16.min(area.height.saturating_sub(2));
         let x = (area.width.saturating_sub(w)) / 2;

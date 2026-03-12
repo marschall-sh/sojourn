@@ -148,9 +148,8 @@ fn render_host_list(f: &mut Frame, app: &mut App, area: Rect) {
         return;
     }
 
-    // ── Scroll adjustment ─────────────────────────────────────────────────────
     let list_height = list_area.height as usize;
-    app.list_page_size = list_height.max(1);   // expose to key handler for PgUp/PgDn
+    app.list_page_size = list_height.max(1);
     let cursor      = app.list_cursor;
 
     if cursor < app.list_scroll {

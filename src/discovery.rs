@@ -18,9 +18,9 @@ use crate::inventory::{
 #[allow(dead_code)]
 pub struct DiscoveredSource {
     pub config: InventoryConfig,
-    pub label: String,        // human-readable description shown in wizard
-    pub host_count: usize,    // reserved for future use (e.g. display in wizard)
-    pub selected: bool,       // whether the user has ticked it in the wizard
+    pub label: String,
+    pub host_count: usize,
+    pub selected: bool,
 }
 
 /// Directories to always skip during scanning (performance + correctness)
