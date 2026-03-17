@@ -67,12 +67,15 @@ pub struct Wizard {
     ip_labels: Vec<IpLabel>,
     ip_label_cursor: usize,
     label_entry: Option<IpLabelEntry>,
-    // Teleport setup step
     teleport_enabled: bool,
     teleport_proxy_input: String,
     teleport_binary_input: String,
     teleport_detected_binary: Option<String>,
     teleport_active_field: TeleportField,
+    teleport_should_test: bool,
+    teleport_tested: bool,
+    teleport_host_count: Option<usize>,
+    teleport_test_error: Option<String>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -103,6 +106,10 @@ impl Wizard {
             teleport_binary_input: detected.clone().unwrap_or_default(),
             teleport_detected_binary: detected,
             teleport_active_field: TeleportField::Toggle,
+            teleport_should_test: false,
+            teleport_tested: false,
+            teleport_host_count: None,
+            teleport_test_error: None,
         }
     }
 
@@ -153,7 +160,113 @@ impl Wizard {
                 self.step = WizardStep::ReviewSources;
                 self.cursor = 0;
             }
+
+            if self.teleport_should_test {
+                self.teleport_should_test = false;
+                self.run_teleport_test(terminal)?;
+            }
         }
+    }
+
+    fn run_teleport_test(
+        &mut self,
+        terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    ) -> anyhow::Result<()> {
+        use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
+
+        let binary = if self.teleport_binary_input.trim().is_empty() {
+            self.teleport_detected_binary.clone().unwrap_or_else(|| "tsh".to_string())
+        } else {
+            self.teleport_binary_input.trim().to_string()
+        };
+
+        disable_raw_mode()?;
+        execute!(
+            io::stdout(),
+            crossterm::terminal::LeaveAlternateScreen,
+            crossterm::event::DisableMouseCapture
+        )?;
+
+        println!("\r\n\x1b[1;36mTesting Teleport connection...\x1b[0m\r\n");
+
+        // Check session, login if needed
+        let mut status_args = vec!["status".to_string()];
+        if !self.teleport_proxy_input.trim().is_empty() {
+            status_args.push(format!("--proxy={}", self.teleport_proxy_input.trim()));
+        }
+        let logged_in = std::process::Command::new(&binary)
+            .args(&status_args)
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+
+        if !logged_in {
+            println!("\r\n\x1b[33mNot logged in — starting tsh login...\x1b[0m\r\n");
+            let mut login_args = vec!["login".to_string()];
+            if !self.teleport_proxy_input.trim().is_empty() {
+                login_args.push(format!("--proxy={}", self.teleport_proxy_input.trim()));
+            }
+            let login_ok = std::process::Command::new(&binary)
+                .args(&login_args)
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+
+            if !login_ok {
+                println!("\r\n\x1b[31m✗ tsh login failed\x1b[0m\r\n");
+                println!("\x1b[2m[Press Enter to return to setup]\x1b[0m");
+                let _ = std::io::stdin().read_line(&mut String::new());
+                enable_raw_mode()?;
+                execute!(
+                    io::stdout(),
+                    crossterm::terminal::EnterAlternateScreen,
+                    crossterm::event::EnableMouseCapture
+                )?;
+                terminal.clear()?;
+                self.teleport_tested = true;
+                self.teleport_test_error = Some("tsh login failed".to_string());
+                return Ok(());
+            }
+        }
+
+        // Now probe host count
+        let mut ls_args = vec!["ls".to_string(), "--format=json".to_string()];
+        if !self.teleport_proxy_input.trim().is_empty() {
+            ls_args.push(format!("--proxy={}", self.teleport_proxy_input.trim()));
+        }
+        match std::process::Command::new(&binary).args(&ls_args).output() {
+            Ok(out) if out.status.success() => {
+                let json = String::from_utf8_lossy(&out.stdout);
+                let count = serde_json::from_str::<serde_json::Value>(json.trim())
+                    .ok()
+                    .and_then(|v| v.as_array().map(|a| a.len()))
+                    .unwrap_or(0);
+                println!("\r\n\x1b[32m✓ Found {} Teleport host(s)\x1b[0m\r\n", count);
+                self.teleport_host_count = Some(count);
+            }
+            Ok(out) => {
+                let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
+                println!("\r\n\x1b[31m✗ tsh ls failed: {}\x1b[0m\r\n", err);
+                self.teleport_test_error = Some(err);
+            }
+            Err(e) => {
+                println!("\r\n\x1b[31m✗ Could not run tsh: {}\x1b[0m\r\n", e);
+                self.teleport_test_error = Some(e.to_string());
+            }
+        }
+
+        println!("\x1b[2m[Press Enter to continue]\x1b[0m");
+        let _ = std::io::stdin().read_line(&mut String::new());
+
+        enable_raw_mode()?;
+        execute!(
+            io::stdout(),
+            crossterm::terminal::EnterAlternateScreen,
+            crossterm::event::EnableMouseCapture
+        )?;
+        terminal.clear()?;
+        self.teleport_tested = true;
+        Ok(())
     }
 
     fn drain_scan_results(&mut self) {
@@ -322,9 +435,16 @@ impl Wizard {
                 }
             }
             (WizardStep::TeleportSetup, Enter) => {
-                self.step = WizardStep::Done;
+                if self.teleport_enabled && !self.teleport_tested {
+                    // First Enter: test the connection
+                    self.teleport_should_test = true;
+                } else {
+                    // Not enabled, or already tested: save and proceed
+                    self.step = WizardStep::Done;
+                }
             }
             (WizardStep::TeleportSetup, Char('n')) | (WizardStep::TeleportSetup, Esc) => {
+                self.teleport_enabled = false;
                 self.step = WizardStep::Done;
             }
 
@@ -835,7 +955,7 @@ impl Wizard {
             ListItem::new(Line::from(vec![
                 Span::raw("  "),
                 Span::styled(
-                    "  Save config & launch sojourn  ",
+                    "  Next →  ",
                     Style::default()
                         .fg(Color::Black)
                         .bg(if done_sel { C_GREEN } else { C_CYAN })
@@ -945,12 +1065,14 @@ impl Wizard {
             .direction(Direction::Vertical)
             .margin(1)
             .constraints([
-                Constraint::Length(1), // title/description
+                Constraint::Length(1), // description
                 Constraint::Length(1), // spacer
                 Constraint::Length(1), // toggle row
                 Constraint::Length(1), // spacer
                 Constraint::Length(1), // proxy row
                 Constraint::Length(1), // binary row
+                Constraint::Length(1), // spacer
+                Constraint::Length(1), // test result row
                 Constraint::Min(0),    // padding
                 Constraint::Length(1), // hints
             ])
@@ -976,9 +1098,9 @@ impl Wizard {
             Style::default().fg(if self.teleport_enabled { C_WHITE } else { C_GRAY })
         };
         let proxy_display = if self.teleport_proxy_input.is_empty() {
-            "Proxy address (optional, e.g. teleport.example.com:443): _".to_string()
+            "Proxy (optional, e.g. teleport.example.com:443): _".to_string()
         } else {
-            format!("Proxy address: {}_", self.teleport_proxy_input)
+            format!("Proxy: {}_", self.teleport_proxy_input)
         };
         f.render_widget(Paragraph::new(proxy_display).style(proxy_style), chunks[4]);
 
@@ -991,25 +1113,45 @@ impl Wizard {
             .map(|p| format!(" (detected: {})", p))
             .unwrap_or_else(|| " (not found in PATH)".to_string());
         let bin_display = if self.teleport_binary_input.is_empty() {
-            format!("tsh binary path{}: _", detected_hint)
+            format!("tsh binary{}: _", detected_hint)
         } else {
-            format!("tsh binary path: {}_", self.teleport_binary_input)
+            format!("tsh binary: {}_", self.teleport_binary_input)
         };
         f.render_widget(Paragraph::new(bin_display).style(bin_style), chunks[5]);
 
+        // Test result row
+        if let Some(count) = self.teleport_host_count {
+            f.render_widget(
+                Paragraph::new(format!("✓  {} host(s) found — press Enter to save", count))
+                    .style(Style::default().fg(C_GREEN)),
+                chunks[7],
+            );
+        } else if let Some(err) = &self.teleport_test_error {
+            f.render_widget(
+                Paragraph::new(format!("✗  {}", err))
+                    .style(Style::default().fg(C_RED)),
+                chunks[7],
+            );
+        }
+
+        let enter_hint = if self.teleport_enabled && !self.teleport_tested {
+            "test connection"
+        } else {
+            "save & continue"
+        };
         let hints = Line::from(vec![
             Span::styled("Space", Style::default().fg(C_YELLOW)),
             Span::raw(" toggle  "),
             Span::styled("Tab", Style::default().fg(C_YELLOW)),
             Span::raw(" next field  "),
             Span::styled("Enter", Style::default().fg(C_GREEN)),
-            Span::raw(" done  "),
+            Span::raw(format!(" {}  ", enter_hint)),
             Span::styled("n", Style::default().fg(C_GRAY)),
             Span::raw(" skip"),
         ]);
         f.render_widget(
             Paragraph::new(hints).alignment(Alignment::Center),
-            chunks[7],
+            chunks[9],
         );
     }
 }
