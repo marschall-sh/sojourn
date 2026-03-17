@@ -27,10 +27,13 @@ pub struct Config {
 pub struct TeleportConfig {
     #[serde(default = "default_false")]
     pub enabled: bool,
-    /// Teleport proxy address, e.g. "teleport.example.com:443".
-    /// If omitted, tsh uses its own ~/.tsh/config.yaml default.
+    /// Teleport cluster address passed to tsh --proxy, e.g. "teleport.example.com:443".
+    /// If omitted, tsh falls back to ~/.tsh/config.yaml.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub proxy: Option<String>,
+    /// Teleport username. Falls back to the host-level user or system user if not set.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
     /// Path to the tsh binary. Auto-discovered if not set.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tsh_binary: Option<String>,
@@ -41,6 +44,7 @@ impl Default for TeleportConfig {
         Self {
             enabled: false,
             proxy: None,
+            username: None,
             tsh_binary: None,
         }
     }

@@ -608,7 +608,9 @@ impl App {
             args.push(format!("--proxy={}", proxy));
         }
 
-        let target = match &host.user {
+        // Teleport username takes priority, then host-level user
+        let user = tp.username.as_deref().or(host.user.as_deref());
+        let target = match user {
             Some(u) => format!("{}@{}", u, host.hostname),
             None => host.hostname.clone(),
         };

@@ -69,6 +69,7 @@ pub struct Wizard {
     label_entry: Option<IpLabelEntry>,
     teleport_enabled: bool,
     teleport_proxy_input: String,
+    teleport_username_input: String,
     teleport_binary_input: String,
     teleport_detected_binary: Option<String>,
     teleport_active_field: TeleportField,
@@ -82,6 +83,7 @@ pub struct Wizard {
 enum TeleportField {
     Toggle,
     Proxy,
+    Username,
     Binary,
 }
 
@@ -103,6 +105,7 @@ impl Wizard {
             label_entry: None,
             teleport_enabled: false,
             teleport_proxy_input: String::new(),
+            teleport_username_input: String::new(),
             teleport_binary_input: detected.clone().unwrap_or_default(),
             teleport_detected_binary: detected,
             teleport_active_field: TeleportField::Toggle,
@@ -205,6 +208,9 @@ impl Wizard {
             let mut login_args = vec!["login".to_string()];
             if !self.teleport_proxy_input.trim().is_empty() {
                 login_args.push(format!("--proxy={}", self.teleport_proxy_input.trim()));
+            }
+            if !self.teleport_username_input.trim().is_empty() {
+                login_args.push(format!("--user={}", self.teleport_username_input.trim()));
             }
             let login_ok = std::process::Command::new(&binary)
                 .args(&login_args)
@@ -406,32 +412,36 @@ impl Wizard {
             }
             (WizardStep::TeleportSetup, Tab) => {
                 self.teleport_active_field = match self.teleport_active_field {
-                    TeleportField::Toggle => TeleportField::Proxy,
-                    TeleportField::Proxy  => TeleportField::Binary,
-                    TeleportField::Binary => TeleportField::Toggle,
+                    TeleportField::Toggle   => TeleportField::Proxy,
+                    TeleportField::Proxy    => TeleportField::Username,
+                    TeleportField::Username => TeleportField::Binary,
+                    TeleportField::Binary   => TeleportField::Toggle,
                 };
             }
             (WizardStep::TeleportSetup, BackTab) => {
                 self.teleport_active_field = match self.teleport_active_field {
-                    TeleportField::Toggle => TeleportField::Binary,
-                    TeleportField::Proxy  => TeleportField::Toggle,
-                    TeleportField::Binary => TeleportField::Proxy,
+                    TeleportField::Toggle   => TeleportField::Binary,
+                    TeleportField::Proxy    => TeleportField::Toggle,
+                    TeleportField::Username => TeleportField::Proxy,
+                    TeleportField::Binary   => TeleportField::Username,
                 };
             }
             (WizardStep::TeleportSetup, Backspace) => {
                 match self.teleport_active_field {
-                    TeleportField::Proxy  => { self.teleport_proxy_input.pop(); }
-                    TeleportField::Binary => { self.teleport_binary_input.pop(); }
-                    TeleportField::Toggle => {}
+                    TeleportField::Proxy    => { self.teleport_proxy_input.pop(); }
+                    TeleportField::Username => { self.teleport_username_input.pop(); }
+                    TeleportField::Binary   => { self.teleport_binary_input.pop(); }
+                    TeleportField::Toggle   => {}
                 }
             }
             (WizardStep::TeleportSetup, Char(c))
                 if self.teleport_active_field != TeleportField::Toggle =>
             {
                 match self.teleport_active_field {
-                    TeleportField::Proxy  => self.teleport_proxy_input.push(c),
-                    TeleportField::Binary => self.teleport_binary_input.push(c),
-                    TeleportField::Toggle => {}
+                    TeleportField::Proxy    => self.teleport_proxy_input.push(c),
+                    TeleportField::Username => self.teleport_username_input.push(c),
+                    TeleportField::Binary   => self.teleport_binary_input.push(c),
+                    TeleportField::Toggle   => {}
                 }
             }
             (WizardStep::TeleportSetup, Enter) => {
@@ -557,17 +567,13 @@ impl Wizard {
             .collect();
 
         let teleport = if self.teleport_enabled {
-            let proxy = if self.teleport_proxy_input.trim().is_empty() {
-                None
-            } else {
-                Some(self.teleport_proxy_input.trim().to_string())
-            };
-            let tsh_binary = if self.teleport_binary_input.trim().is_empty() {
-                None
-            } else {
-                Some(self.teleport_binary_input.trim().to_string())
-            };
-            Some(crate::config::TeleportConfig { enabled: true, proxy, tsh_binary })
+            let opt = |s: &str| if s.trim().is_empty() { None } else { Some(s.trim().to_string()) };
+            Some(crate::config::TeleportConfig {
+                enabled: true,
+                proxy:      opt(&self.teleport_proxy_input),
+                username:   opt(&self.teleport_username_input),
+                tsh_binary: opt(&self.teleport_binary_input),
+            })
         } else {
             None
         };
@@ -1069,7 +1075,8 @@ impl Wizard {
                 Constraint::Length(1), // spacer
                 Constraint::Length(1), // toggle row
                 Constraint::Length(1), // spacer
-                Constraint::Length(1), // proxy row
+                Constraint::Length(1), // cluster address row
+                Constraint::Length(1), // username row
                 Constraint::Length(1), // binary row
                 Constraint::Length(1), // spacer
                 Constraint::Length(1), // test result row
@@ -1092,23 +1099,34 @@ impl Wizard {
         };
         f.render_widget(Paragraph::new(toggle_label).style(toggle_style), chunks[2]);
 
-        let proxy_style = if self.teleport_active_field == TeleportField::Proxy {
-            Style::default().fg(C_CYAN)
-        } else {
-            Style::default().fg(if self.teleport_enabled { C_WHITE } else { C_GRAY })
+        let field_style = |field: &TeleportField| {
+            if self.teleport_active_field == *field {
+                Style::default().fg(C_CYAN)
+            } else {
+                Style::default().fg(if self.teleport_enabled { C_WHITE } else { C_GRAY })
+            }
         };
-        let proxy_display = if self.teleport_proxy_input.is_empty() {
-            "Proxy (optional, e.g. teleport.example.com:443): _".to_string()
-        } else {
-            format!("Proxy: {}_", self.teleport_proxy_input)
-        };
-        f.render_widget(Paragraph::new(proxy_display).style(proxy_style), chunks[4]);
 
-        let bin_style = if self.teleport_active_field == TeleportField::Binary {
-            Style::default().fg(C_CYAN)
+        let proxy_display = if self.teleport_proxy_input.is_empty() {
+            "Cluster address (e.g. teleport.example.com:443): _".to_string()
         } else {
-            Style::default().fg(if self.teleport_enabled { C_WHITE } else { C_GRAY })
+            format!("Cluster address: {}_", self.teleport_proxy_input)
         };
+        f.render_widget(
+            Paragraph::new(proxy_display).style(field_style(&TeleportField::Proxy)),
+            chunks[4],
+        );
+
+        let user_display = if self.teleport_username_input.is_empty() {
+            "Teleport username (optional, defaults to system user): _".to_string()
+        } else {
+            format!("Teleport username: {}_", self.teleport_username_input)
+        };
+        f.render_widget(
+            Paragraph::new(user_display).style(field_style(&TeleportField::Username)),
+            chunks[5],
+        );
+
         let detected_hint = self.teleport_detected_binary.as_deref()
             .map(|p| format!(" (detected: {})", p))
             .unwrap_or_else(|| " (not found in PATH)".to_string());
@@ -1117,20 +1135,22 @@ impl Wizard {
         } else {
             format!("tsh binary: {}_", self.teleport_binary_input)
         };
-        f.render_widget(Paragraph::new(bin_display).style(bin_style), chunks[5]);
+        f.render_widget(
+            Paragraph::new(bin_display).style(field_style(&TeleportField::Binary)),
+            chunks[6],
+        );
 
-        // Test result row
         if let Some(count) = self.teleport_host_count {
             f.render_widget(
                 Paragraph::new(format!("✓  {} host(s) found — press Enter to save", count))
                     .style(Style::default().fg(C_GREEN)),
-                chunks[7],
+                chunks[8],
             );
         } else if let Some(err) = &self.teleport_test_error {
             f.render_widget(
                 Paragraph::new(format!("✗  {}", err))
                     .style(Style::default().fg(C_RED)),
-                chunks[7],
+                chunks[8],
             );
         }
 
@@ -1151,7 +1171,7 @@ impl Wizard {
         ]);
         f.render_widget(
             Paragraph::new(hints).alignment(Alignment::Center),
-            chunks[9],
+            chunks[10],
         );
     }
 }
