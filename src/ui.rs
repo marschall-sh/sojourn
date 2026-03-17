@@ -199,13 +199,19 @@ fn render_host_list(f: &mut Frame, app: &mut App, area: Rect) {
         let ip_text    = host.ip.as_deref().unwrap_or(&host.hostname);
         let display_ip = truncate_str(ip_text, addr_field_w.saturating_sub(1));
 
-        // Location label
-        let location = host
-            .ip
-            .as_deref()
-            .and_then(|ip| app.config.label_for_ip(ip))
-            .map(|l| l.label.as_str())
-            .unwrap_or("");
+        // Location label — Teleport hosts always show "Teleport", others use IP label
+        let location_owned;
+        let location = if host.source == "teleport" {
+            "Teleport"
+        } else {
+            location_owned = host
+                .ip
+                .as_deref()
+                .and_then(|ip| app.config.label_for_ip(ip))
+                .map(|l| l.label.clone())
+                .unwrap_or_default();
+            location_owned.as_str()
+        };
 
         // Assemble spans
         let mut spans: Vec<Span> = vec![marker];
@@ -320,7 +326,12 @@ fn render_host_details(f: &mut Frame, app: &App, area: Rect) {
     lines.push(label_line("IP Address", t));
     let ip_str = host.ip.as_deref().unwrap_or("(none)");
     lines.push(value_line(ip_str, t.ip, false));
-    if let Some(ip) = &host.ip {
+    if host.source == "teleport" {
+        lines.push(Line::from(vec![
+            Span::raw("    "),
+            Span::styled("Teleport", Style::default().fg(t.location).add_modifier(Modifier::BOLD)),
+        ]));
+    } else if let Some(ip) = &host.ip {
         if let Some(label) = app.config.label_for_ip(ip) {
             lines.push(Line::from(vec![
                 Span::raw("    "),
@@ -553,13 +564,21 @@ fn render_status_bar(f: &mut Frame, app: &App, area: Rect) {
             format!(" {} selected", multi_count),
             Style::default().fg(t.multi_marker).add_modifier(Modifier::BOLD),
         )
+    } else if !filter_label.is_empty() {
+        (filter_label.clone(), Style::default().fg(t.location).add_modifier(Modifier::BOLD))
     } else {
         (String::new(), Style::default())
     };
 
+    let filter_label = match app.source_filter {
+        crate::app::SourceFilter::All          => String::new(),
+        crate::app::SourceFilter::SshOnly      => "  [ssh] ".to_string(),
+        crate::app::SourceFilter::TeleportOnly => "  [teleport] ".to_string(),
+    };
+
     let hints = match app.mode {
-        Mode::Search   => " ↑↓ move  ·  Enter connect  ·  Esc clear  ·  Tab list ",
-        Mode::Navigate => " ↑↓/jk move  ·  Enter connect  ·  e edit  ·  / search  ·  ? help  ·  q quit ",
+        Mode::Search   => " ↑↓ move  ·  Enter connect  ·  Esc clear  ·  Tab list  ·  f filter ",
+        Mode::Navigate => " ↑↓/jk move  ·  Enter connect  ·  e edit  ·  f filter  ·  / search  ·  ? help  ·  q quit ",
         Mode::EditHost => " Tab next  ·  Enter save  ·  Esc cancel ",
         Mode::Help     => " ? / Esc  close ",
     };
@@ -621,6 +640,7 @@ fn render_help_overlay(f: &mut Frame, area: Rect, t: &Theme) {
         help_section("CONNECTIONS", t),
         help_row("Enter", "SSH connect to selected host", t),
         help_row("e", "Edit host — set user, label, jump host", t),
+        help_row("f", "Cycle filter: all → ssh → teleport", t),
         help_row("Space", "Toggle multi-select on host", t),
         help_row("Ctrl+A", "Select all visible hosts", t),
         help_row("Ctrl+D", "Clear all selections", t),

@@ -67,6 +67,30 @@ pub enum Mode {
     EditHost,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum SourceFilter {
+    All,
+    SshOnly,
+    TeleportOnly,
+}
+
+impl SourceFilter {
+    pub fn cycle(&self) -> Self {
+        match self {
+            SourceFilter::All           => SourceFilter::SshOnly,
+            SourceFilter::SshOnly       => SourceFilter::TeleportOnly,
+            SourceFilter::TeleportOnly  => SourceFilter::All,
+        }
+    }
+    pub fn label(&self) -> &'static str {
+        match self {
+            SourceFilter::All          => "all",
+            SourceFilter::SshOnly      => "ssh",
+            SourceFilter::TeleportOnly => "teleport",
+        }
+    }
+}
+
 pub struct App {
     pub config: Config,
     pub theme: &'static Theme,
@@ -78,6 +102,7 @@ pub struct App {
     pub list_page_size: usize,
     pub multi_selected: HashSet<usize>,
     pub mode: Mode,
+    pub source_filter: SourceFilter,
     pub edit_state: Option<EditState>,
     pub status: Option<String>,
     pub should_quit: bool,
@@ -98,6 +123,7 @@ impl App {
             list_page_size: 20,
             multi_selected: HashSet::new(),
             mode: Mode::Search,
+            source_filter: SourceFilter::All,
             edit_state: None,
             status: None,
             should_quit: false,
@@ -223,8 +249,22 @@ impl App {
             self.filtered = self.search_engine.search(&self.query, &self.hosts);
         }
 
+        // Apply source filter
+        self.filtered.retain(|(idx, _)| {
+            match self.source_filter {
+                SourceFilter::All          => true,
+                SourceFilter::SshOnly      => self.hosts[*idx].source != "teleport",
+                SourceFilter::TeleportOnly => self.hosts[*idx].source == "teleport",
+            }
+        });
+
         self.list_cursor = 0;
         self.list_scroll = 0;
+    }
+
+    pub fn cycle_source_filter(&mut self) {
+        self.source_filter = self.source_filter.cycle();
+        self.update_filter();
     }
 
     pub fn selected_host(&self) -> Option<&Host> {
@@ -387,6 +427,9 @@ impl App {
                 }
                 (KM::CONTROL, Char('d')) => {
                     self.multi_selected.clear();
+                }
+                (_, Char('f')) => {
+                    self.cycle_source_filter();
                 }
                 (_, Char('c')) => {
                     self.open_config_in_editor(terminal)?;
@@ -678,6 +721,13 @@ fn clean_hosts(hosts: Vec<crate::inventory::Host>) -> Vec<crate::inventory::Host
 
         // Drop wildcard SSH config patterns (Host * or Host *.example.com)
         if host.hostname.contains('*') || host.hostname.contains('?') { continue; }
+
+        // Teleport hosts are validated by tsh — never filter them out
+        if host.source == "teleport" {
+            if !seen.insert(format!("teleport|{}", host.hostname)) { continue; }
+            out.push(host);
+            continue;
+        }
 
         // Drop entries that are just a bare hostname with no IP and no useful info —
         // keep them only if they have at least a port, user, jump, or look like an FQDN/IP
