@@ -15,6 +15,7 @@ use crate::inventory::{
     ansible::AnsibleInventory,
     shell_alias::ShellAliasInventory,
     ssh_config::SshConfigInventory,
+    teleport::{find_tsh_binary, TeleportInventory},
     yaml_config::YamlInventory,
     Host, InventorySource,
 };
@@ -153,6 +154,23 @@ impl App {
                                 Some(format!("Warning: shell alias scan failed: {}", e))
                         }
                     }
+                }
+            }
+        }
+
+        // Load Teleport hosts if enabled
+        if let Some(tp) = &self.config.teleport.clone() {
+            if tp.enabled {
+                let binary = tp.tsh_binary.clone()
+                    .or_else(find_tsh_binary)
+                    .unwrap_or_else(|| "tsh".to_string());
+                let inv = TeleportInventory {
+                    tsh_binary: binary,
+                    proxy: tp.proxy.clone(),
+                };
+                match inv.load() {
+                    Ok(hosts) => self.hosts.extend(hosts),
+                    Err(e) => self.status = Some(format!("Teleport: {}", e)),
                 }
             }
         }
@@ -483,6 +501,28 @@ impl App {
 
             println!("\r\n\x1b[1;36m⚡ Connecting to {} ...\x1b[0m\r\n", host.hostname);
 
+            // For Teleport hosts, check session validity and login if needed
+            if host.source == "teleport" {
+                if let Some(tp) = &self.config.teleport {
+                    let binary = tp.tsh_binary.clone()
+                        .or_else(find_tsh_binary)
+                        .unwrap_or_else(|| "tsh".to_string());
+                    let inv = TeleportInventory {
+                        tsh_binary: binary.clone(),
+                        proxy: tp.proxy.clone(),
+                    };
+                    if !inv.is_logged_in() {
+                        println!("\r\n\x1b[33mTeleport session expired — press Enter to authenticate\x1b[0m\r\n");
+                        let _ = std::io::stdin().read_line(&mut String::new());
+                        let mut login_args = vec!["login".to_string()];
+                        if let Some(proxy) = &tp.proxy {
+                            login_args.push(format!("--proxy={}", proxy));
+                        }
+                        Command::new(&binary).args(&login_args).status().ok();
+                    }
+                }
+            }
+
             let exit_status = self.ssh_connect(&host);
 
             // If SSH exited immediately (e.g. host key check failed / changed),
@@ -519,6 +559,10 @@ impl App {
     }
 
     fn ssh_connect(&self, host: &Host) -> Result<std::process::ExitStatus> {
+        if host.source == "teleport" {
+            return self.tsh_connect(host);
+        }
+
         let mut args: Vec<String> = Vec::new();
 
         if let Some(jump) = &host.jump_host {
@@ -545,6 +589,32 @@ impl App {
         args.push(host.connect_target());
 
         let status = Command::new("ssh").args(&args).status()?;
+        Ok(status)
+    }
+
+    fn tsh_connect(&self, host: &Host) -> Result<std::process::ExitStatus> {
+        let tp = match &self.config.teleport {
+            Some(t) => t,
+            None => anyhow::bail!("Teleport config missing"),
+        };
+
+        let binary = tp.tsh_binary.clone()
+            .or_else(find_tsh_binary)
+            .unwrap_or_else(|| "tsh".to_string());
+
+        let mut args = vec!["ssh".to_string()];
+
+        if let Some(proxy) = &tp.proxy {
+            args.push(format!("--proxy={}", proxy));
+        }
+
+        let target = match &host.user {
+            Some(u) => format!("{}@{}", u, host.hostname),
+            None => host.hostname.clone(),
+        };
+        args.push(target);
+
+        let status = Command::new(&binary).args(&args).status()?;
         Ok(status)
     }
 

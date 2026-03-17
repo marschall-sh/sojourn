@@ -16,9 +16,34 @@ pub struct Config {
     #[serde(default)]
     pub jump_hosts: Vec<JumpHostRule>,
 
-    /// Per-host overrides set via the TUI editor (keyed by hostname)
     #[serde(default)]
     pub host_overrides: Vec<HostOverride>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub teleport: Option<TeleportConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeleportConfig {
+    #[serde(default = "default_false")]
+    pub enabled: bool,
+    /// Teleport proxy address, e.g. "teleport.example.com:443".
+    /// If omitted, tsh uses its own ~/.tsh/config.yaml default.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub proxy: Option<String>,
+    /// Path to the tsh binary. Auto-discovered if not set.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tsh_binary: Option<String>,
+}
+
+impl Default for TeleportConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            proxy: None,
+            tsh_binary: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -125,13 +150,11 @@ impl Config {
             .find(|label| ip_matches_pattern(ip, &label.pattern))
     }
 
-    /// Find the override entry for a given hostname, if any.
     #[allow(dead_code)]
     pub fn override_for(&self, hostname: &str) -> Option<&HostOverride> {
         self.host_overrides.iter().find(|o| o.hostname == hostname)
     }
 
-    /// Upsert a host override — replaces existing entry or appends a new one.
     pub fn upsert_override(&mut self, ov: HostOverride) {
         if let Some(existing) = self.host_overrides.iter_mut().find(|o| o.hostname == ov.hostname) {
             *existing = ov;
@@ -151,6 +174,7 @@ impl Default for Config {
             ip_labels: vec![],
             jump_hosts: vec![],
             host_overrides: vec![],
+            teleport: None,
         }
     }
 }

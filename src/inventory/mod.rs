@@ -37,7 +37,6 @@ impl Host {
         parts.join(" ")
     }
 
-    /// The actual target string passed to ssh (user@ip or user@hostname)
     pub fn connect_target(&self) -> String {
         let host = self.ip.as_deref().unwrap_or(&self.hostname);
         match &self.user {
@@ -54,4 +53,5 @@ pub trait InventorySource {
 pub mod ansible;
 pub mod shell_alias;
 pub mod ssh_config;
+pub mod teleport;
 pub mod yaml_config;

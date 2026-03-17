@@ -35,6 +35,7 @@ enum WizardStep {
     ManualAdd,
     IpLabels,
     AddIpLabel,
+    TeleportSetup,
     Done,
 }
 
@@ -66,10 +67,24 @@ pub struct Wizard {
     ip_labels: Vec<IpLabel>,
     ip_label_cursor: usize,
     label_entry: Option<IpLabelEntry>,
+    // Teleport setup step
+    teleport_enabled: bool,
+    teleport_proxy_input: String,
+    teleport_binary_input: String,
+    teleport_detected_binary: Option<String>,
+    teleport_active_field: TeleportField,
+}
+
+#[derive(Clone, PartialEq)]
+enum TeleportField {
+    Toggle,
+    Proxy,
+    Binary,
 }
 
 impl Wizard {
     pub fn new() -> Self {
+        let detected = crate::inventory::teleport::find_tsh_binary();
         Self {
             step: WizardStep::Scanning,
             sources: Vec::new(),
@@ -83,6 +98,11 @@ impl Wizard {
             ip_labels: default_ip_labels(),
             ip_label_cursor: 0,
             label_entry: None,
+            teleport_enabled: false,
+            teleport_proxy_input: String::new(),
+            teleport_binary_input: detected.clone().unwrap_or_default(),
+            teleport_detected_binary: detected,
+            teleport_active_field: TeleportField::Toggle,
         }
     }
 
@@ -255,10 +275,56 @@ impl Wizard {
                     });
                     self.step = WizardStep::AddIpLabel;
                 } else {
-                    self.step = WizardStep::Done;
+                    self.step = WizardStep::TeleportSetup;
                 }
             }
             (WizardStep::IpLabels, Char('s')) | (WizardStep::IpLabels, Char('n')) => {
+                self.step = WizardStep::TeleportSetup;
+            }
+
+            // ── TeleportSetup ─────────────────────────────────────────────
+            (WizardStep::TeleportSetup, Char(' ')) | (WizardStep::TeleportSetup, Enter)
+                if self.teleport_active_field == TeleportField::Toggle =>
+            {
+                self.teleport_enabled = !self.teleport_enabled;
+                if self.teleport_enabled {
+                    self.teleport_active_field = TeleportField::Proxy;
+                }
+            }
+            (WizardStep::TeleportSetup, Tab) => {
+                self.teleport_active_field = match self.teleport_active_field {
+                    TeleportField::Toggle => TeleportField::Proxy,
+                    TeleportField::Proxy  => TeleportField::Binary,
+                    TeleportField::Binary => TeleportField::Toggle,
+                };
+            }
+            (WizardStep::TeleportSetup, BackTab) => {
+                self.teleport_active_field = match self.teleport_active_field {
+                    TeleportField::Toggle => TeleportField::Binary,
+                    TeleportField::Proxy  => TeleportField::Toggle,
+                    TeleportField::Binary => TeleportField::Proxy,
+                };
+            }
+            (WizardStep::TeleportSetup, Backspace) => {
+                match self.teleport_active_field {
+                    TeleportField::Proxy  => { self.teleport_proxy_input.pop(); }
+                    TeleportField::Binary => { self.teleport_binary_input.pop(); }
+                    TeleportField::Toggle => {}
+                }
+            }
+            (WizardStep::TeleportSetup, Char(c))
+                if self.teleport_active_field != TeleportField::Toggle =>
+            {
+                match self.teleport_active_field {
+                    TeleportField::Proxy  => self.teleport_proxy_input.push(c),
+                    TeleportField::Binary => self.teleport_binary_input.push(c),
+                    TeleportField::Toggle => {}
+                }
+            }
+            (WizardStep::TeleportSetup, Enter) => {
+                self.step = WizardStep::Done;
+            }
+            (WizardStep::TeleportSetup, Char('n')) | (WizardStep::TeleportSetup, Esc) => {
                 self.step = WizardStep::Done;
             }
 
@@ -370,12 +436,29 @@ impl Wizard {
             .map(|s| s.config.clone())
             .collect();
 
+        let teleport = if self.teleport_enabled {
+            let proxy = if self.teleport_proxy_input.trim().is_empty() {
+                None
+            } else {
+                Some(self.teleport_proxy_input.trim().to_string())
+            };
+            let tsh_binary = if self.teleport_binary_input.trim().is_empty() {
+                None
+            } else {
+                Some(self.teleport_binary_input.trim().to_string())
+            };
+            Some(crate::config::TeleportConfig { enabled: true, proxy, tsh_binary })
+        } else {
+            None
+        };
+
         Config {
             settings: Settings::default(),
             inventory,
             ip_labels: self.ip_labels.clone(),
             jump_hosts: vec![],
             host_overrides: vec![],
+            teleport,
         }
     }
 
@@ -402,6 +485,7 @@ impl Wizard {
                 self.render_ip_labels(f, popup);
                 self.render_add_ip_label_overlay(f, area);
             }
+            WizardStep::TeleportSetup => self.render_teleport_setup(f, popup),
             WizardStep::Done => {}
         }
     }
@@ -843,9 +927,92 @@ impl Wizard {
             f.render_widget(Paragraph::new(Text::from(lines)), inner);
         }
     }
-}
 
-// ─────────────────────────────────────────────────────────────────────────────
+    fn render_teleport_setup(&self, f: &mut Frame, area: Rect) {
+        use ratatui::layout::Alignment;
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .title(" Teleport (tsh) ")
+            .title_style(Style::default().fg(C_CYAN).add_modifier(Modifier::BOLD))
+            .style(Style::default().fg(C_WHITE));
+
+        let inner = block.inner(area);
+        f.render_widget(block, area);
+
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .margin(1)
+            .constraints([
+                Constraint::Length(1), // title/description
+                Constraint::Length(1), // spacer
+                Constraint::Length(1), // toggle row
+                Constraint::Length(1), // spacer
+                Constraint::Length(1), // proxy row
+                Constraint::Length(1), // binary row
+                Constraint::Min(0),    // padding
+                Constraint::Length(1), // hints
+            ])
+            .split(inner);
+
+        f.render_widget(
+            Paragraph::new("Enable Teleport integration (tsh ls + tsh ssh)")
+                .style(Style::default().fg(C_GRAY)),
+            chunks[0],
+        );
+
+        let toggle_label = if self.teleport_enabled { "[x] Enable Teleport" } else { "[ ] Enable Teleport" };
+        let toggle_style = if self.teleport_active_field == TeleportField::Toggle {
+            Style::default().fg(C_CYAN).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(C_WHITE)
+        };
+        f.render_widget(Paragraph::new(toggle_label).style(toggle_style), chunks[2]);
+
+        let proxy_style = if self.teleport_active_field == TeleportField::Proxy {
+            Style::default().fg(C_CYAN)
+        } else {
+            Style::default().fg(if self.teleport_enabled { C_WHITE } else { C_GRAY })
+        };
+        let proxy_display = if self.teleport_proxy_input.is_empty() {
+            "Proxy address (optional, e.g. teleport.example.com:443): _".to_string()
+        } else {
+            format!("Proxy address: {}_", self.teleport_proxy_input)
+        };
+        f.render_widget(Paragraph::new(proxy_display).style(proxy_style), chunks[4]);
+
+        let bin_style = if self.teleport_active_field == TeleportField::Binary {
+            Style::default().fg(C_CYAN)
+        } else {
+            Style::default().fg(if self.teleport_enabled { C_WHITE } else { C_GRAY })
+        };
+        let detected_hint = self.teleport_detected_binary.as_deref()
+            .map(|p| format!(" (detected: {})", p))
+            .unwrap_or_else(|| " (not found in PATH)".to_string());
+        let bin_display = if self.teleport_binary_input.is_empty() {
+            format!("tsh binary path{}: _", detected_hint)
+        } else {
+            format!("tsh binary path: {}_", self.teleport_binary_input)
+        };
+        f.render_widget(Paragraph::new(bin_display).style(bin_style), chunks[5]);
+
+        let hints = Line::from(vec![
+            Span::styled("Space", Style::default().fg(C_YELLOW)),
+            Span::raw(" toggle  "),
+            Span::styled("Tab", Style::default().fg(C_YELLOW)),
+            Span::raw(" next field  "),
+            Span::styled("Enter", Style::default().fg(C_GREEN)),
+            Span::raw(" done  "),
+            Span::styled("n", Style::default().fg(C_GRAY)),
+            Span::raw(" skip"),
+        ]);
+        f.render_widget(
+            Paragraph::new(hints).alignment(Alignment::Center),
+            chunks[7],
+        );
+    }
+}
 
 fn config_path(c: &InventoryConfig) -> String {
     match c {

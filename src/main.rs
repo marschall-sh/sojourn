@@ -259,6 +259,21 @@ fn cmd_config_check(config_path: Option<&str>) -> Result<()> {
             println!("  {:<20} → {}", l.pattern, l.label);
         }
     }
+
+    if let Some(tp) = &config.teleport {
+        println!("\nTeleport: {}", if tp.enabled { "enabled" } else { "disabled" });
+        if let Some(proxy) = &tp.proxy {
+            println!("  proxy:  {}", proxy);
+        }
+        if let Some(bin) = &tp.tsh_binary {
+            println!("  binary: {}", bin);
+        } else {
+            let found = inventory::teleport::find_tsh_binary()
+                .unwrap_or_else(|| "not found".into());
+            println!("  binary: {} (auto-detected)", found);
+        }
+    }
+
     Ok(())
 }
 
