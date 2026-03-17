@@ -65,6 +65,13 @@ pub enum Mode {
     Navigate,
     Help,
     EditHost,
+    TeleportLoginPick,
+}
+
+pub struct LoginPickState {
+    pub logins: Vec<String>,
+    pub cursor: usize,
+    pub host: Host,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -104,6 +111,8 @@ pub struct App {
     pub mode: Mode,
     pub source_filter: SourceFilter,
     pub edit_state: Option<EditState>,
+    pub login_pick: Option<LoginPickState>,
+    pub teleport_logins: Vec<String>,
     pub status: Option<String>,
     pub should_quit: bool,
     search_engine: SearchEngine,
@@ -125,6 +134,8 @@ impl App {
             mode: Mode::Search,
             source_filter: SourceFilter::All,
             edit_state: None,
+            login_pick: None,
+            teleport_logins: Vec::new(),
             status: None,
             should_quit: false,
             search_engine: SearchEngine::new(),
@@ -194,6 +205,7 @@ impl App {
                     tsh_binary: binary,
                     proxy: tp.proxy.clone(),
                 };
+                self.teleport_logins = inv.get_logins();
                 match inv.load() {
                     Ok(hosts) => self.hosts.extend(hosts),
                     Err(e) => self.status = Some(format!("Teleport: {}", e)),
@@ -382,7 +394,7 @@ impl App {
                 }
                 (_, Enter) => {
                     if !self.filtered.is_empty() {
-                        self.execute_ssh_and_return(terminal)?;
+                        self.try_connect_or_pick_login(terminal)?;
                     }
                 }
                 (_, Char(c)) => {
@@ -415,7 +427,7 @@ impl App {
                     self.move_page_up();
                 }
                 (_, Enter) => {
-                    self.execute_ssh_and_return(terminal)?;
+                    self.try_connect_or_pick_login(terminal)?;
                 }
                 (_, Char(' ')) => {
                     self.toggle_multi_select();
@@ -484,6 +496,33 @@ impl App {
                     }
                 }
             }
+
+            Mode::TeleportLoginPick => {
+                match key.code {
+                    Esc => {
+                        self.login_pick = None;
+                        self.mode = Mode::Navigate;
+                    }
+                    Up | Char('k') => {
+                        if let Some(p) = &mut self.login_pick {
+                            if p.cursor > 0 { p.cursor -= 1; }
+                        }
+                    }
+                    Down | Char('j') => {
+                        if let Some(p) = &mut self.login_pick {
+                            if p.cursor + 1 < p.logins.len() { p.cursor += 1; }
+                        }
+                    }
+                    Enter => {
+                        if let Some(p) = self.login_pick.take() {
+                            let login = p.logins[p.cursor].clone();
+                            self.mode = Mode::Navigate;
+                            self.execute_tsh_with_login(terminal, p.host, login)?;
+                        }
+                    }
+                    _ => {}
+                }
+            }
         }
         Ok(())
     }
@@ -501,6 +540,86 @@ impl App {
             });
             self.mode = Mode::EditHost;
         }
+    }
+
+    fn try_connect_or_pick_login<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> Result<()> {
+        if let Some(host) = self.selected_host().cloned() {
+            // teleport.username is for `tsh login` auth only — never used for SSH login selection
+            let needs_picker = host.source == "teleport"
+                && self.teleport_logins.len() > 1;
+
+            if needs_picker {
+                self.login_pick = Some(LoginPickState {
+                    logins: self.teleport_logins.clone(),
+                    cursor: 0,
+                    host,
+                });
+                self.mode = Mode::TeleportLoginPick;
+            } else {
+                self.execute_ssh_and_return(terminal)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn execute_tsh_with_login<B: Backend>(
+        &mut self,
+        terminal: &mut Terminal<B>,
+        host: Host,
+        login: String,
+    ) -> Result<()> {
+        disable_raw_mode()?;
+        execute!(
+            std::io::stdout(),
+            LeaveAlternateScreen,
+            DisableMouseCapture
+        )?;
+        terminal.show_cursor()?;
+
+        println!("\r\n\x1b[1;36m⚡ Connecting to {} as {} ...\x1b[0m\r\n", host.hostname, login);
+
+        if let Some(tp) = &self.config.teleport {
+            let binary = tp.tsh_binary.clone()
+                .or_else(find_tsh_binary)
+                .unwrap_or_else(|| "tsh".to_string());
+            let inv = TeleportInventory { tsh_binary: binary.clone(), proxy: tp.proxy.clone() };
+            if !inv.is_logged_in() {
+                println!("\r\n\x1b[33mTeleport session expired — press Enter to authenticate\x1b[0m\r\n");
+                let _ = std::io::stdin().read_line(&mut String::new());
+                let mut login_args = vec!["login".to_string()];
+                if let Some(proxy) = &tp.proxy {
+                    login_args.push(format!("--proxy={}", proxy));
+                }
+                Command::new(&binary).args(&login_args).status().ok();
+            }
+        }
+
+        let exit_status = self.tsh_connect_as(&host, &login);
+
+        let quick_exit = exit_status.as_ref().map(|s| !s.success()).unwrap_or(true);
+
+        if self.config.settings.exit_after_connect {
+            if quick_exit {
+                println!("\r\n\x1b[2m[Press any key to exit...]\x1b[0m");
+                let _ = std::io::stdin().read_line(&mut String::new());
+            }
+            self.should_quit = true;
+        } else {
+            if quick_exit {
+                println!("\r\n\x1b[2m[Press any key to return to sojourn...]\x1b[0m");
+                let _ = std::io::stdin().read_line(&mut String::new());
+            } else {
+                println!("\r\n\x1b[2m[Disconnected. Returning to sojourn...]\x1b[0m\r\n");
+            }
+            enable_raw_mode()?;
+            execute!(
+                std::io::stdout(),
+                EnterAlternateScreen,
+                EnableMouseCapture
+            )?;
+            terminal.clear()?;
+        }
+        Ok(())
     }
 
     fn save_edit_overlay(&mut self) -> Result<()> {
@@ -636,6 +755,16 @@ impl App {
     }
 
     fn tsh_connect(&self, host: &Host) -> Result<std::process::ExitStatus> {
+        // teleport.username is for `tsh login` auth only — not used here.
+        // SSH login: first available tsh login from `tsh status`, then host-level user, then none.
+        let login = self.teleport_logins.first()
+            .cloned()
+            .or_else(|| host.user.clone())
+            .unwrap_or_default();
+        self.tsh_connect_as(host, &login)
+    }
+
+    fn tsh_connect_as(&self, host: &Host, login: &str) -> Result<std::process::ExitStatus> {
         let tp = match &self.config.teleport {
             Some(t) => t,
             None => anyhow::bail!("Teleport config missing"),
@@ -645,21 +774,15 @@ impl App {
             .or_else(find_tsh_binary)
             .unwrap_or_else(|| "tsh".to_string());
 
-        let mut args = vec!["ssh".to_string()];
-
-        if let Some(proxy) = &tp.proxy {
-            args.push(format!("--proxy={}", proxy));
-        }
-
-        // Teleport username takes priority, then host-level user
-        let user = tp.username.as_deref().or(host.user.as_deref());
-        let target = match user {
-            Some(u) => format!("{}@{}", u, host.hostname),
-            None => host.hostname.clone(),
+        let target = if login.is_empty() {
+            host.hostname.clone()
+        } else {
+            format!("{}@{}", login, host.hostname)
         };
-        args.push(target);
 
-        let status = Command::new(&binary).args(&args).status()?;
+        let status = Command::new(&binary)
+            .args(["ssh", &target])
+            .status()?;
         Ok(status)
     }
 

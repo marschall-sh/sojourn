@@ -77,6 +77,12 @@ pub struct Wizard {
     teleport_tested: bool,
     teleport_host_count: Option<usize>,
     teleport_test_error: Option<String>,
+    // Paths from existing config — used to auto-select matching sources after scan
+    existing_inventory_paths: Vec<String>,
+    existing_config_loaded: bool,
+    existing_settings: Option<Settings>,
+    existing_jump_hosts: Vec<crate::config::JumpHostRule>,
+    existing_host_overrides: Vec<crate::config::HostOverride>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -85,11 +91,43 @@ enum TeleportField {
     Proxy,
     Username,
     Binary,
+    Next,
 }
 
 impl Wizard {
     pub fn new() -> Self {
         let detected = crate::inventory::teleport::find_tsh_binary();
+
+        // Try to load an existing config and pre-populate fields from it
+        let existing = Config::load(None).ok();
+        let existing_config_loaded = existing.is_some();
+
+        let ip_labels = existing.as_ref()
+            .filter(|c| !c.ip_labels.is_empty())
+            .map(|c| c.ip_labels.clone())
+            .unwrap_or_else(default_ip_labels);
+
+        let (tp_enabled, tp_proxy, tp_username, tp_binary) =
+            if let Some(tp) = existing.as_ref().and_then(|c| c.teleport.as_ref()) {
+                (
+                    tp.enabled,
+                    tp.proxy.clone().unwrap_or_default(),
+                    tp.username.clone().unwrap_or_default(),
+                    tp.tsh_binary.clone().unwrap_or_else(|| detected.clone().unwrap_or_default()),
+                )
+            } else {
+                (false, String::new(), String::new(), detected.clone().unwrap_or_default())
+            };
+
+        let existing_inventory_paths: Vec<String> = existing
+            .as_ref()
+            .map(|c| c.inventory.iter().map(config_path).collect())
+            .unwrap_or_default();
+
+        let existing_settings     = existing.as_ref().map(|c| c.settings.clone());
+        let existing_jump_hosts   = existing.as_ref().map(|c| c.jump_hosts.clone()).unwrap_or_default();
+        let existing_host_overrides = existing.as_ref().map(|c| c.host_overrides.clone()).unwrap_or_default();
+
         Self {
             step: WizardStep::Scanning,
             sources: Vec::new(),
@@ -100,19 +138,24 @@ impl Wizard {
             spinner_tick: 0,
             manual_input: String::new(),
             manual_error: None,
-            ip_labels: default_ip_labels(),
+            ip_labels,
             ip_label_cursor: 0,
             label_entry: None,
-            teleport_enabled: false,
-            teleport_proxy_input: String::new(),
-            teleport_username_input: String::new(),
-            teleport_binary_input: detected.clone().unwrap_or_default(),
+            teleport_enabled: tp_enabled,
+            teleport_proxy_input: tp_proxy,
+            teleport_username_input: tp_username,
+            teleport_binary_input: tp_binary,
             teleport_detected_binary: detected,
             teleport_active_field: TeleportField::Toggle,
             teleport_should_test: false,
             teleport_tested: false,
             teleport_host_count: None,
             teleport_test_error: None,
+            existing_inventory_paths,
+            existing_config_loaded,
+            existing_settings,
+            existing_jump_hosts,
+            existing_host_overrides,
         }
     }
 
@@ -282,11 +325,17 @@ impl Wizard {
         if let Some(rx) = &self.scan_rx {
             loop {
                 match rx.try_recv() {
-                    Ok(src) => {
+                    Ok(mut src) => {
                         let already = self.sources.iter().any(|s| {
                             config_path(&s.config) == config_path(&src.config)
                         });
                         if !already {
+                            // Auto-select if this source was in the previous config
+                            if self.existing_inventory_paths
+                                .contains(&config_path(&src.config))
+                            {
+                                src.selected = true;
+                            }
                             self.sources.push(src);
                         }
                     }
@@ -371,7 +420,9 @@ impl Wizard {
                 }
             }
             (WizardStep::IpLabels, Down) | (WizardStep::IpLabels, Char('j')) => {
-                if self.ip_label_cursor < self.ip_labels.len() {
+                // ip_labels.len()   = "Add new" row
+                // ip_labels.len()+1 = "Next →" button
+                if self.ip_label_cursor < self.ip_labels.len() + 1 {
                     self.ip_label_cursor += 1;
                 }
             }
@@ -385,6 +436,7 @@ impl Wizard {
             }
             (WizardStep::IpLabels, Enter) => {
                 if self.ip_label_cursor == self.ip_labels.len() {
+                    // "Add new" row
                     self.label_entry = Some(IpLabelEntry {
                         pattern: String::new(),
                         label: String::new(),
@@ -393,9 +445,11 @@ impl Wizard {
                         label_input: String::new(),
                     });
                     self.step = WizardStep::AddIpLabel;
-                } else {
+                } else if self.ip_label_cursor > self.ip_labels.len() {
+                    // "Next →" button
                     self.step = WizardStep::TeleportSetup;
                 }
+                // Enter on an existing label row does nothing
             }
             (WizardStep::IpLabels, Char('s')) | (WizardStep::IpLabels, Char('n')) => {
                 self.step = WizardStep::TeleportSetup;
@@ -415,15 +469,17 @@ impl Wizard {
                     TeleportField::Toggle   => TeleportField::Proxy,
                     TeleportField::Proxy    => TeleportField::Username,
                     TeleportField::Username => TeleportField::Binary,
-                    TeleportField::Binary   => TeleportField::Toggle,
+                    TeleportField::Binary   => TeleportField::Next,
+                    TeleportField::Next     => TeleportField::Toggle,
                 };
             }
             (WizardStep::TeleportSetup, BackTab) => {
                 self.teleport_active_field = match self.teleport_active_field {
-                    TeleportField::Toggle   => TeleportField::Binary,
+                    TeleportField::Toggle   => TeleportField::Next,
                     TeleportField::Proxy    => TeleportField::Toggle,
                     TeleportField::Username => TeleportField::Proxy,
                     TeleportField::Binary   => TeleportField::Username,
+                    TeleportField::Next     => TeleportField::Binary,
                 };
             }
             (WizardStep::TeleportSetup, Backspace) => {
@@ -431,27 +487,38 @@ impl Wizard {
                     TeleportField::Proxy    => { self.teleport_proxy_input.pop(); }
                     TeleportField::Username => { self.teleport_username_input.pop(); }
                     TeleportField::Binary   => { self.teleport_binary_input.pop(); }
-                    TeleportField::Toggle   => {}
+                    TeleportField::Toggle | TeleportField::Next => {}
                 }
             }
             (WizardStep::TeleportSetup, Char(c))
-                if self.teleport_active_field != TeleportField::Toggle =>
+                if self.teleport_active_field != TeleportField::Toggle
+                    && self.teleport_active_field != TeleportField::Next =>
             {
                 match self.teleport_active_field {
                     TeleportField::Proxy    => self.teleport_proxy_input.push(c),
                     TeleportField::Username => self.teleport_username_input.push(c),
                     TeleportField::Binary   => self.teleport_binary_input.push(c),
-                    TeleportField::Toggle   => {}
+                    TeleportField::Toggle | TeleportField::Next => {}
+                }
+            }
+            (WizardStep::TeleportSetup, Enter)
+                if self.teleport_active_field == TeleportField::Next =>
+            {
+                if self.teleport_enabled && !self.teleport_tested {
+                    self.teleport_should_test = true;
+                } else {
+                    self.step = WizardStep::Done;
                 }
             }
             (WizardStep::TeleportSetup, Enter) => {
-                if self.teleport_enabled && !self.teleport_tested {
-                    // First Enter: test the connection
-                    self.teleport_should_test = true;
-                } else {
-                    // Not enabled, or already tested: save and proceed
-                    self.step = WizardStep::Done;
-                }
+                // Enter on a text field advances focus to the next field
+                self.teleport_active_field = match self.teleport_active_field {
+                    TeleportField::Toggle   => TeleportField::Proxy,
+                    TeleportField::Proxy    => TeleportField::Username,
+                    TeleportField::Username => TeleportField::Binary,
+                    TeleportField::Binary   => TeleportField::Next,
+                    TeleportField::Next     => TeleportField::Next,
+                };
             }
             (WizardStep::TeleportSetup, Char('n')) | (WizardStep::TeleportSetup, Esc) => {
                 self.teleport_enabled = false;
@@ -579,11 +646,11 @@ impl Wizard {
         };
 
         Config {
-            settings: Settings::default(),
+            settings: self.existing_settings.clone().unwrap_or_default(),
             inventory,
             ip_labels: self.ip_labels.clone(),
-            jump_hosts: vec![],
-            host_overrides: vec![],
+            jump_hosts: self.existing_jump_hosts.clone(),
+            host_overrides: self.existing_host_overrides.clone(),
             teleport,
         }
     }
@@ -731,16 +798,24 @@ impl Wizard {
             .split(inner);
 
         // Header text
-        let header = Paragraph::new(Text::from(vec![
-            Line::raw(""),
+        let notice = if self.existing_config_loaded {
+            Line::from(vec![
+                Span::raw("  "),
+                Span::styled(
+                    "✓ Existing config loaded — previous selections pre-checked.",
+                    Style::default().fg(C_GREEN),
+                ),
+            ])
+        } else {
             Line::from(vec![
                 Span::raw("  Select which inventory sources to load. "),
                 Span::styled("[Space]", Style::default().fg(C_YELLOW)),
                 Span::raw(" toggles, "),
                 Span::styled("[Enter]", Style::default().fg(C_YELLOW)),
                 Span::raw(" continues."),
-            ]),
-        ]));
+            ])
+        };
+        let header = Paragraph::new(Text::from(vec![Line::raw(""), notice]));
         f.render_widget(header, layout[0]);
 
         // Source list + "Add manually" row
@@ -1071,17 +1146,18 @@ impl Wizard {
             .direction(Direction::Vertical)
             .margin(1)
             .constraints([
-                Constraint::Length(1), // description
-                Constraint::Length(1), // spacer
-                Constraint::Length(1), // toggle row
-                Constraint::Length(1), // spacer
-                Constraint::Length(1), // cluster address row
-                Constraint::Length(1), // username row
-                Constraint::Length(1), // binary row
-                Constraint::Length(1), // spacer
-                Constraint::Length(1), // test result row
-                Constraint::Min(0),    // padding
-                Constraint::Length(1), // hints
+                Constraint::Length(1), // [0] description
+                Constraint::Length(1), // [1] spacer
+                Constraint::Length(1), // [2] toggle row
+                Constraint::Length(1), // [3] spacer
+                Constraint::Length(1), // [4] cluster address row
+                Constraint::Length(1), // [5] username row
+                Constraint::Length(1), // [6] binary row
+                Constraint::Length(1), // [7] spacer
+                Constraint::Length(1), // [8] test result row
+                Constraint::Min(0),    // [9] padding
+                Constraint::Length(1), // [10] next button
+                Constraint::Length(1), // [11] hints
             ])
             .split(inner);
 
@@ -1118,9 +1194,9 @@ impl Wizard {
         );
 
         let user_display = if self.teleport_username_input.is_empty() {
-            "Teleport username (optional, defaults to system user): _".to_string()
+            "Login identity for tsh login --user (optional): _".to_string()
         } else {
-            format!("Teleport username: {}_", self.teleport_username_input)
+            format!("tsh login --user={}_", self.teleport_username_input)
         };
         f.render_widget(
             Paragraph::new(user_display).style(field_style(&TeleportField::Username)),
@@ -1142,7 +1218,7 @@ impl Wizard {
 
         if let Some(count) = self.teleport_host_count {
             f.render_widget(
-                Paragraph::new(format!("✓  {} host(s) found — press Enter to save", count))
+                Paragraph::new(format!("✓  {} host(s) found", count))
                     .style(Style::default().fg(C_GREEN)),
                 chunks[8],
             );
@@ -1154,24 +1230,37 @@ impl Wizard {
             );
         }
 
-        let enter_hint = if self.teleport_enabled && !self.teleport_tested {
-            "test connection"
+        // "Next →" / "Test →" button
+        let next_focused = self.teleport_active_field == TeleportField::Next;
+        let next_label = if self.teleport_enabled && !self.teleport_tested {
+            "  Test connection  "
         } else {
-            "save & continue"
+            "  Save & continue  "
         };
+        let next_style = if next_focused {
+            Style::default().fg(Color::Black).bg(C_GREEN).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::Black).bg(C_CYAN).add_modifier(Modifier::BOLD)
+        };
+        f.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::raw("  "),
+                Span::styled(next_label, next_style),
+            ])),
+            chunks[10],
+        );
+
         let hints = Line::from(vec![
             Span::styled("Space", Style::default().fg(C_YELLOW)),
             Span::raw(" toggle  "),
-            Span::styled("Tab", Style::default().fg(C_YELLOW)),
+            Span::styled("Tab/↵", Style::default().fg(C_YELLOW)),
             Span::raw(" next field  "),
-            Span::styled("Enter", Style::default().fg(C_GREEN)),
-            Span::raw(format!(" {}  ", enter_hint)),
             Span::styled("n", Style::default().fg(C_GRAY)),
             Span::raw(" skip"),
         ]);
         f.render_widget(
             Paragraph::new(hints).alignment(Alignment::Center),
-            chunks[10],
+            chunks[11],
         );
     }
 }

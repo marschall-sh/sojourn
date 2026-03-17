@@ -2,9 +2,7 @@
 
 > *sojourn* /ˈsoʊdʒərn/ — a temporary stay in a place. Because every shell session is just passing through.
 
-**A fast, minimal TUI for managing SSH hosts — built in Rust.**
-
-Fuzzy-search across thousands of hosts from your SSH config, Ansible inventories, shell aliases, or YAML files. Hit Enter. You're in.
+A fast, minimal TUI for managing SSH hosts — built in Rust. Fuzzy-search across thousands of hosts, hit Enter, you're in.
 
 ![sojourn demo](assets/demo.gif)
 
@@ -18,25 +16,45 @@ curl -fsSL https://raw.githubusercontent.com/marschall-sh/sojourn/main/install.s
 
 Installs to `~/.local/bin`. Supports **macOS (Apple Silicon)**, **Linux (x86-64)**, and **Linux (arm64)**.
 
-Or build from source (requires [Rust](https://rustup.rs/)):
+Or build from source:
 
 ```bash
 cargo install --git https://github.com/marschall-sh/sojourn
 ```
 
-On first run, sojourn scans your system for SSH hosts automatically and walks you through a short setup wizard.
+---
+
+## Getting started
+
+On first run, sojourn launches a setup wizard that auto-discovers SSH configs, Ansible inventories, and shell aliases on your machine:
+
+```bash
+sojourn setup
+```
+
+Select your inventory sources, configure IP range labels, and optionally enable integrations like Teleport. Re-running `sojourn setup` at any time pre-fills all existing settings — you only change what you need.
 
 ---
 
-## What it does
+## Features
 
-- **Fuzzy search** across all your hosts as you type — hostname, IP, group, tag
-- **Multiple inventory sources** — SSH config (`~/.ssh/config`), Ansible inventories, shell aliases (`.zshrc`/`.bashrc`), custom YAML
+- **Fuzzy search** across all hosts as you type — hostname, IP, group, tag
+- **Multiple inventory sources** — SSH config, Ansible inventories, shell aliases, custom YAML
 - **IP range labels** — map `10.0.*` → `Home Lab`, `10.10.*` → `Office VPN`
 - **Jump host support** — auto-wires `ProxyJump` based on host patterns
 - **Multi-select** — open connections to several hosts at once
 - **9 built-in themes** — six dark, three light
-- **First-run wizard** — auto-discovers your inventories, no manual config needed
+- **Plugins** — extend sojourn with integrations like [Teleport (tsh)](docs/teleport.md)
+
+---
+
+## Plugins
+
+| Plugin | Description | Docs |
+|--------|-------------|------|
+| **Teleport** | Browse and connect to Teleport-managed hosts alongside SSH hosts. Login picker, session management, source filter. | [→ docs/teleport.md](docs/teleport.md) |
+
+Enable plugins during `sojourn setup` or by editing `~/.config/sojourn/config.toml` directly.
 
 ---
 
@@ -44,25 +62,26 @@ On first run, sojourn scans your system for SSH hosts automatically and walks yo
 
 | Key | Action |
 |-----|--------|
-| `/` or start typing | Search hosts |
-| `↑↓` / `j` `k` | Navigate list |
-| `Enter` | SSH connect |
+| `/` or start typing | Search |
+| `↑↓` / `j` `k` | Navigate |
+| `Enter` | Connect |
 | `Space` | Multi-select |
-| `e` | Edit host (user, label, jump host) |
-| `Ctrl+A` / `Ctrl+D` | Select all / clear selection |
-| `?` | Help overlay |
+| `f` | Cycle filter: all → ssh → teleport |
+| `e` | Edit host |
+| `Ctrl+A` / `Ctrl+D` | Select all / clear |
+| `?` | Help |
 | `q` | Quit |
 
 ---
 
 ## Config
 
-Create `~/.config/sojourn/config.toml`:
+The wizard writes `~/.config/sojourn/config.toml` for you. You can also edit it directly:
 
 ```toml
 [settings]
 default_user = "ubuntu"
-theme = "tokyo-night"           # default | tokyo-night | catppuccin | dracula | gruvbox | nord
+theme = "tokyo-night"
 connect_on_single_match = true
 
 [[inventory]]
@@ -82,13 +101,11 @@ pattern = "10.10.*"
 label   = "Office VPN"
 ```
 
-See [`config.example.toml`](config.example.toml) for all options including YAML inventories, jump host rules, and host overrides.
+See [`config.example.toml`](config.example.toml) for all options.
 
 ---
 
 ## Themes
-
-Nine themes ship out of the box — six dark, three light. Set `theme` in your config:
 
 ```toml
 # dark
@@ -105,7 +122,7 @@ theme = "solarized-light"   # also: catppuccin-latte · rose-pine-dawn
 </tr>
 </table>
 
-[→ See all 9 themes](assets/themes-preview.png)
+[→ All 9 themes](assets/themes-preview.png)
 
 ---
 
@@ -117,7 +134,5 @@ rm -rf ~/.config/sojourn/
 ```
 
 ---
-
-## License
 
 MIT — see [LICENSE](LICENSE)

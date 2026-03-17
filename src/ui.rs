@@ -6,7 +6,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::app::{App, EditField, Mode};
+use crate::app::{App, EditField, Mode, LoginPickState};
 use crate::theme::Theme;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -40,6 +40,11 @@ pub fn render(f: &mut Frame, app: &mut App) {
     }
     if app.mode == Mode::EditHost {
         render_edit_overlay(f, size, app);
+    }
+    if app.mode == Mode::TeleportLoginPick {
+        if let Some(pick) = app.login_pick.as_ref() {
+            render_login_picker(f, size, pick, app.theme);
+        }
     }
 }
 
@@ -420,7 +425,21 @@ fn render_host_details(f: &mut Frame, app: &App, area: Rect) {
 
     // Connect command
     lines.push(label_line("Connect", t));
-    let cmd = format!("ssh {}", host.connect_target());
+    let cmd = if host.source == "teleport" {
+        // teleport.username is for `tsh login` auth only — SSH login comes from tsh status Logins
+        let target = if app.teleport_logins.len() > 1 {
+            format!("<login>@{}", host.hostname)
+        } else if let Some(u) = app.teleport_logins.first() {
+            format!("{}@{}", u, host.hostname)
+        } else if let Some(u) = host.user.as_deref() {
+            format!("{}@{}", u, host.hostname)
+        } else {
+            host.hostname.clone()
+        };
+        format!("tsh ssh {}", target)
+    } else {
+        format!("ssh {}", host.connect_target())
+    };
     lines.push(value_line(&cmd, t.accent, false));
     lines.push(Line::raw(""));
 
@@ -576,10 +595,11 @@ fn render_status_bar(f: &mut Frame, app: &App, area: Rect) {
     };
 
     let hints = match app.mode {
-        Mode::Search   => " ↑↓ move  ·  Enter connect  ·  Esc clear  ·  Tab list  ·  f filter ",
-        Mode::Navigate => " ↑↓/jk move  ·  Enter connect  ·  e edit  ·  f filter  ·  / search  ·  ? help  ·  q quit ",
-        Mode::EditHost => " Tab next  ·  Enter save  ·  Esc cancel ",
-        Mode::Help     => " ? / Esc  close ",
+        Mode::Search             => " ↑↓ move  ·  Enter connect  ·  Esc clear  ·  Tab list  ·  f filter ",
+        Mode::Navigate           => " ↑↓/jk move  ·  Enter connect  ·  e edit  ·  f filter  ·  / search  ·  ? help  ·  q quit ",
+        Mode::EditHost           => " Tab next  ·  Enter save  ·  Esc cancel ",
+        Mode::Help               => " ? / Esc  close ",
+        Mode::TeleportLoginPick  => " ↑↓/jk move  ·  Enter connect  ·  Esc cancel ",
     };
 
     // Right-align hints across the full status bar
@@ -752,4 +772,80 @@ fn render_edit_overlay(f: &mut Frame, area: Rect, app: &App) {
     ];
 
     f.render_widget(Paragraph::new(Text::from(lines)), inner);
+}
+
+// ── Teleport login picker ─────────────────────────────────────────────────────
+fn render_login_picker(f: &mut Frame, area: Rect, pick: &LoginPickState, t: &Theme) {
+    let popup_h = (pick.logins.len() as u16 + 5).min(area.height.saturating_sub(4));
+    let popup_w = 38_u16.min(area.width.saturating_sub(4));
+
+    let popup = Rect {
+        x: area.x + (area.width.saturating_sub(popup_w)) / 2,
+        y: area.y + (area.height.saturating_sub(popup_h)) / 2,
+        width: popup_w,
+        height: popup_h,
+    };
+
+    f.render_widget(Clear, popup);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(t.border_active))
+        .title(format!(" {} ", pick.host.hostname))
+        .title_style(Style::default().fg(t.accent).add_modifier(Modifier::BOLD));
+
+    let inner = block.inner(popup);
+    f.render_widget(block, popup);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1), // header label
+            Constraint::Length(1), // spacer
+            Constraint::Min(1),    // login rows
+            Constraint::Length(1), // hint
+        ])
+        .split(inner);
+
+    f.render_widget(
+        Paragraph::new("Select Teleport login:")
+            .style(Style::default().fg(t.fg_dim)),
+        chunks[0],
+    );
+
+    let visible = chunks[2].height as usize;
+    let scroll = if pick.cursor >= visible { pick.cursor + 1 - visible } else { 0 };
+
+    let login_lines: Vec<Line> = pick.logins.iter().enumerate()
+        .skip(scroll)
+        .map(|(i, login)| {
+            if i == pick.cursor {
+                Line::from(vec![
+                    Span::styled("▶ ", Style::default().fg(t.accent)),
+                    Span::styled(login.clone(), Style::default()
+                        .fg(t.fg).add_modifier(Modifier::BOLD)),
+                ])
+            } else {
+                Line::from(vec![
+                    Span::raw("  "),
+                    Span::styled(login.clone(), Style::default().fg(t.fg)),
+                ])
+            }
+        })
+        .collect();
+
+    f.render_widget(Paragraph::new(Text::from(login_lines)), chunks[2]);
+
+    f.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled("↑↓", Style::default().fg(t.key_hint)),
+            Span::raw(" move  "),
+            Span::styled("Enter", Style::default().fg(t.key_hint)),
+            Span::raw(" connect  "),
+            Span::styled("Esc", Style::default().fg(t.key_hint)),
+            Span::raw(" cancel"),
+        ])).alignment(Alignment::Center),
+        chunks[3],
+    );
 }

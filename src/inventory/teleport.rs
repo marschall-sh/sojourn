@@ -49,7 +49,6 @@ impl TeleportInventory {
     }
 
     /// Check whether the current tsh session is valid.
-    /// Returns Ok(true) if logged in, Ok(false) if expired/missing.
     pub fn is_logged_in(&self) -> bool {
         let mut args = self.tsh_args("status");
         args.push("--format=json".to_string());
@@ -58,6 +57,19 @@ impl TeleportInventory {
             .output()
             .map(|o| o.status.success())
             .unwrap_or(false)
+    }
+
+    /// Return the list of allowed logins from the active tsh session.
+    /// Empty if not logged in or unable to parse.
+    pub fn get_logins(&self) -> Vec<String> {
+        let mut args = self.tsh_args("status");
+        args.push("--format=json".to_string());
+        let output = match Command::new(&self.tsh_binary).args(&args).output() {
+            Ok(o) if o.status.success() => o,
+            _ => return Vec::new(),
+        };
+        let json = String::from_utf8_lossy(&output.stdout);
+        parse_tsh_logins(&json)
     }
 }
 
@@ -77,6 +89,25 @@ impl InventorySource for TeleportInventory {
 
         let json = String::from_utf8_lossy(&output.stdout);
         parse_tsh_ls(&json)
+    }
+}
+
+fn parse_tsh_logins(json: &str) -> Vec<String> {
+    let v: serde_json::Value = match serde_json::from_str(json.trim()) {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
+    };
+    // SSH logins live in active.traits.logins.
+    // active.logins is the Teleport identity username, not SSH roles — skip it.
+    let logins = v["active"]["traits"]["logins"]
+        .as_array()
+        .or_else(|| v["active"]["logins"].as_array());
+    match logins {
+        Some(arr) => arr.iter()
+            .filter_map(|l| l.as_str())
+            .map(|s| s.to_string())
+            .collect(),
+        None => Vec::new(),
     }
 }
 
