@@ -555,9 +555,8 @@ fn render_status_bar(f: &mut Frame, app: &App, area: Rect) {
     let multi_count = app.multi_selected.len();
 
     let filter_label: String = match app.source_filter {
-        crate::app::SourceFilter::All          => String::new(),
-        crate::app::SourceFilter::SshOnly      => "  [ssh] ".to_string(),
-        crate::app::SourceFilter::TeleportOnly => "  [teleport] ".to_string(),
+        crate::app::SourceFilter::All => String::new(),
+        ref f => format!("  [{}] ", f.label()),
     };
 
     let (left_text, left_style): (String, Style) = if let Some(status) = &app.status {
