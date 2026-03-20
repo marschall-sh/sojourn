@@ -601,7 +601,7 @@ fn render_status_bar(f: &mut Frame, app: &App, area: Rect) {
 
     let hints = match app.mode {
         Mode::Search             => " ↑↓ move  ·  Enter connect  ·  Esc clear  ·  Tab list  ·  f filter ",
-        Mode::Navigate           => " ↑↓/jk move  ·  Enter connect  ·  e edit  ·  f filter  ·  / search  ·  ? help  ·  q quit ",
+        Mode::Navigate           => " ↑↓/jk move  ·  Enter connect  ·  e edit  ·  f filter  ·  l tsh login  ·  / search  ·  ? help  ·  q quit ",
         Mode::EditHost           => " Tab next  ·  Enter save  ·  Esc cancel ",
         Mode::Help               => " ? / Esc  close ",
         Mode::EditTeleportUser   => " Enter save  ·  Ctrl+U clear  ·  Esc cancel ",
@@ -666,6 +666,7 @@ fn render_help_overlay(f: &mut Frame, area: Rect, t: &Theme) {
         help_row("Enter", "SSH connect to selected host", t),
         help_row("e", "Edit host — set user, label, jump host", t),
         help_row("f", "Cycle filter: all → ssh → teleport", t),
+        help_row("l", "Re-authenticate Teleport session (tsh login)", t),
         help_row("Space", "Toggle multi-select on host", t),
         help_row("Ctrl+A", "Select all visible hosts", t),
         help_row("Ctrl+D", "Clear all selections", t),
