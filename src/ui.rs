@@ -6,7 +6,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::app::{App, EditField, Mode, LoginPickState};
+use crate::app::{App, EditField, Mode, LoginPickState, EditTeleportUserState};
 use crate::theme::Theme;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -44,6 +44,11 @@ pub fn render(f: &mut Frame, app: &mut App) {
     if app.mode == Mode::TeleportLoginPick {
         if let Some(pick) = app.login_pick.as_ref() {
             render_login_picker(f, size, pick, app.theme);
+        }
+    }
+    if app.mode == Mode::EditTeleportUser {
+        if let Some(state) = app.edit_teleport_user.as_ref() {
+            render_teleport_user_overlay(f, size, state, app.theme);
         }
     }
 }
@@ -599,6 +604,7 @@ fn render_status_bar(f: &mut Frame, app: &App, area: Rect) {
         Mode::Navigate           => " ↑↓/jk move  ·  Enter connect  ·  e edit  ·  f filter  ·  / search  ·  ? help  ·  q quit ",
         Mode::EditHost           => " Tab next  ·  Enter save  ·  Esc cancel ",
         Mode::Help               => " ? / Esc  close ",
+        Mode::EditTeleportUser   => " Enter save  ·  Ctrl+U clear  ·  Esc cancel ",
         Mode::TeleportLoginPick  => " ↑↓/jk move  ·  Enter connect  ·  Esc cancel ",
     };
 
@@ -848,4 +854,52 @@ fn render_login_picker(f: &mut Frame, area: Rect, pick: &LoginPickState, t: &The
         ])).alignment(Alignment::Center),
         chunks[3],
     );
+}
+
+// ── Teleport identity edit overlay ───────────────────────────────────────────
+fn render_teleport_user_overlay(f: &mut Frame, area: Rect, state: &EditTeleportUserState, t: &Theme) {
+    let w = 52u16.min(area.width.saturating_sub(4));
+    let h = 7u16;
+    let popup = Rect {
+        x: (area.width.saturating_sub(w)) / 2,
+        y: (area.height.saturating_sub(h)) / 2,
+        width: w,
+        height: h,
+    };
+
+    f.render_widget(Clear, popup);
+
+    let block = Block::default()
+        .title(Span::styled(
+            " ✎ Teleport identity (tsh login --user) ",
+            Style::default().fg(t.key_hint).add_modifier(Modifier::BOLD),
+        ))
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(t.key_hint));
+
+    let inner = block.inner(popup);
+    f.render_widget(block, popup);
+
+    let lines = vec![
+        Line::raw(""),
+        Line::from(vec![
+            Span::styled("  Identity  ", Style::default().fg(t.key_hint).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                format!("{}█", state.input),
+                Style::default().fg(t.fg).add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        Line::raw(""),
+        Line::from(vec![
+            Span::styled("  [Enter] ", Style::default().fg(t.key_hint)),
+            Span::raw("save  "),
+            Span::styled("[Ctrl+U] ", Style::default().fg(t.key_hint)),
+            Span::raw("clear  "),
+            Span::styled("[Esc] ", Style::default().fg(t.key_hint)),
+            Span::raw("cancel"),
+        ]),
+    ];
+
+    f.render_widget(Paragraph::new(Text::from(lines)), inner);
 }

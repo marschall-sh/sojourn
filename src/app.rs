@@ -65,7 +65,12 @@ pub enum Mode {
     Navigate,
     Help,
     EditHost,
+    EditTeleportUser,
     TeleportLoginPick,
+}
+
+pub struct EditTeleportUserState {
+    pub input: String,
 }
 
 pub struct LoginPickState {
@@ -111,6 +116,7 @@ pub struct App {
     pub mode: Mode,
     pub source_filter: SourceFilter,
     pub edit_state: Option<EditState>,
+    pub edit_teleport_user: Option<EditTeleportUserState>,
     pub login_pick: Option<LoginPickState>,
     pub teleport_logins: Vec<String>,
     pub status: Option<String>,
@@ -134,6 +140,7 @@ impl App {
             mode: Mode::Search,
             source_filter: SourceFilter::All,
             edit_state: None,
+            edit_teleport_user: None,
             login_pick: None,
             teleport_logins: Vec::new(),
             status: None,
@@ -447,7 +454,11 @@ impl App {
                     self.open_config_in_editor(terminal)?;
                 }
                 (_, Char('e')) => {
-                    self.open_edit_overlay();
+                    if self.selected_host().map(|h| h.source == "teleport").unwrap_or(false) {
+                        self.open_teleport_user_overlay();
+                    } else {
+                        self.open_edit_overlay();
+                    }
                 }
                 _ => {}
             },
@@ -497,6 +508,24 @@ impl App {
                 }
             }
 
+            Mode::EditTeleportUser => {
+                if let Some(state) = self.edit_teleport_user.as_mut() {
+                    match (key.modifiers, key.code) {
+                        (_, Esc) => {
+                            self.edit_teleport_user = None;
+                            self.mode = Mode::Navigate;
+                        }
+                        (_, Enter) => {
+                            self.save_teleport_user_overlay()?;
+                        }
+                        (_, Backspace) => { state.input.pop(); }
+                        (KM::CONTROL, Char('u')) => { state.input.clear(); }
+                        (_, Char(c)) => { state.input.push(c); }
+                        _ => {}
+                    }
+                }
+            }
+
             Mode::TeleportLoginPick => {
                 match key.code {
                     Esc => {
@@ -540,6 +569,32 @@ impl App {
             });
             self.mode = Mode::EditHost;
         }
+    }
+
+    fn open_teleport_user_overlay(&mut self) {
+        let current = self.config.teleport.as_ref()
+            .and_then(|t| t.username.clone())
+            .unwrap_or_default();
+        self.edit_teleport_user = Some(EditTeleportUserState { input: current });
+        self.mode = Mode::EditTeleportUser;
+    }
+
+    fn save_teleport_user_overlay(&mut self) -> Result<()> {
+        let state = match self.edit_teleport_user.take() {
+            Some(s) => s,
+            None => return Ok(()),
+        };
+        if let Some(tp) = self.config.teleport.as_mut() {
+            tp.username = if state.input.trim().is_empty() {
+                None
+            } else {
+                Some(state.input.trim().to_string())
+            };
+        }
+        crate::wizard::write_config(&self.config)?;
+        self.status = Some("Teleport identity saved.".into());
+        self.mode = Mode::Navigate;
+        Ok(())
     }
 
     fn try_connect_or_pick_login<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> Result<()> {
