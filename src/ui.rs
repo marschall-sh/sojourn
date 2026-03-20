@@ -341,6 +341,15 @@ fn render_host_details(f: &mut Frame, app: &App, area: Rect) {
             Span::raw("    "),
             Span::styled("Teleport", Style::default().fg(t.location).add_modifier(Modifier::BOLD)),
         ]));
+        lines.push(Line::raw(""));
+        let identity = app.config.teleport.as_ref()
+            .and_then(|t| t.username.clone())
+            .unwrap_or_else(|| "(default)".to_string());
+        lines.push(label_line("Identity", t));
+        lines.push(Line::from(vec![
+            Span::styled(format!("    {}", identity), Style::default().fg(t.accent)),
+            Span::styled("  e to change", Style::default().fg(t.fg_dim)),
+        ]));
     } else if let Some(ip) = &host.ip {
         if let Some(label) = app.config.label_for_ip(ip) {
             lines.push(Line::from(vec![
