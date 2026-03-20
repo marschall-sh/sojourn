@@ -212,10 +212,14 @@ impl App {
                     tsh_binary: binary,
                     proxy: tp.proxy.clone(),
                 };
-                self.teleport_logins = inv.get_logins();
-                match inv.load() {
-                    Ok(hosts) => self.hosts.extend(hosts),
-                    Err(e) => self.status = Some(format!("Teleport: {}", e)),
+                if !inv.is_logged_in() {
+                    self.status = Some("Teleport session expired — press L to log in".into());
+                } else {
+                    self.teleport_logins = inv.get_logins();
+                    match inv.load() {
+                        Ok(hosts) => self.hosts.extend(hosts),
+                        Err(e) => self.status = Some(format!("Teleport: {}", e)),
+                    }
                 }
             }
         }
@@ -460,6 +464,11 @@ impl App {
                         self.open_edit_overlay();
                     }
                 }
+                (_, Char('l')) => {
+                    if self.config.teleport.as_ref().map(|t| t.enabled).unwrap_or(false) {
+                        self.teleport_relogin(terminal)?;
+                    }
+                }
                 _ => {}
             },
 
@@ -517,6 +526,10 @@ impl App {
                         }
                         (_, Enter) => {
                             self.save_teleport_user_overlay()?;
+                            // Identity changed — re-authenticate immediately with the new --user
+                            if self.config.teleport.as_ref().map(|t| t.enabled).unwrap_or(false) {
+                                self.teleport_relogin(terminal)?;
+                            }
                         }
                         (_, Backspace) => { state.input.pop(); }
                         (KM::CONTROL, Char('u')) => { state.input.clear(); }
@@ -592,7 +605,7 @@ impl App {
             };
         }
         crate::wizard::write_config(&self.config)?;
-        self.status = Some("Teleport identity saved.".into());
+        self.status = Some("Identity saved — re-authenticating…".into());
         self.mode = Mode::Navigate;
         Ok(())
     }
@@ -839,6 +852,67 @@ impl App {
             .args(["ssh", &target])
             .status()?;
         Ok(status)
+    }
+
+    fn teleport_relogin<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> Result<()> {
+        let tp = match self.config.teleport.clone() {
+            Some(t) if t.enabled => t,
+            _ => return Ok(()),
+        };
+
+        let binary = tp.tsh_binary.clone()
+            .or_else(find_tsh_binary)
+            .unwrap_or_else(|| "tsh".to_string());
+
+        disable_raw_mode()?;
+        execute!(std::io::stdout(), LeaveAlternateScreen, DisableMouseCapture)?;
+        terminal.show_cursor()?;
+
+        println!("\r\n\x1b[1;36mLogging in to Teleport...\x1b[0m\r\n");
+
+        let mut login_args = vec!["login".to_string()];
+        if let Some(proxy) = &tp.proxy {
+            login_args.push(format!("--proxy={}", proxy));
+        }
+        if let Some(user) = &tp.username {
+            login_args.push(format!("--user={}", user));
+        }
+        let status = Command::new(&binary).args(&login_args).status();
+
+        match status {
+            Ok(s) if s.success() => {
+                println!("\r\n\x1b[32m✓ Logged in — reloading Teleport hosts...\x1b[0m\r\n");
+            }
+            _ => {
+                println!("\r\n\x1b[31m✗ Login failed or cancelled.\x1b[0m\r\n");
+                println!("\x1b[2m[Press Enter to return to sojourn]\x1b[0m");
+                let _ = std::io::stdin().read_line(&mut String::new());
+            }
+        }
+
+        enable_raw_mode()?;
+        execute!(std::io::stdout(), EnterAlternateScreen, EnableMouseCapture)?;
+        terminal.clear()?;
+
+        // Reload Teleport inventory
+        let inv = TeleportInventory { tsh_binary: binary, proxy: tp.proxy.clone() };
+        if inv.is_logged_in() {
+            self.teleport_logins = inv.get_logins();
+            self.hosts.retain(|h| h.source != "teleport");
+            match inv.load() {
+                Ok(hosts) => {
+                    self.hosts.extend(hosts);
+                    self.status = Some(format!(
+                        "Teleport: loaded {} host(s)",
+                        self.hosts.iter().filter(|h| h.source == "teleport").count()
+                    ));
+                }
+                Err(e) => self.status = Some(format!("Teleport: {}", e)),
+            }
+            self.update_filter();
+        }
+
+        Ok(())
     }
 
     fn open_config_in_editor<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> Result<()> {
