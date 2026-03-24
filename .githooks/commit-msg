@@ -1,0 +1,5 @@
+#!/bin/sh
+if grep -qi "co-authored-by" "$1"; then
+  echo "ERROR: Commit message contains 'Co-Authored-By' — remove it before committing."
+  exit 1
+fi
