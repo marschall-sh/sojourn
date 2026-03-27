@@ -686,6 +686,10 @@ impl App {
                 EnableMouseCapture
             )?;
             terminal.clear()?;
+            // Drain buffered input from the SSH session (see execute_ssh_and_return)
+            while crossterm::event::poll(std::time::Duration::from_millis(0))? {
+                let _ = crossterm::event::read();
+            }
         }
         Ok(())
     }
@@ -783,6 +787,13 @@ impl App {
                     EnableMouseCapture
                 )?;
                 terminal.clear()?;
+                // Drain any keypresses buffered during the SSH session (Linux
+                // does not flush the terminal input queue when a subprocess exits,
+                // so a stray Enter from typing "exit\n" would immediately trigger
+                // another connect if we don't consume it here).
+                while crossterm::event::poll(std::time::Duration::from_millis(0))? {
+                    let _ = crossterm::event::read();
+                }
             }
         }
         Ok(())
