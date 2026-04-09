@@ -658,6 +658,9 @@ impl App {
                 if let Some(proxy) = &tp.proxy {
                     login_args.push(format!("--proxy={}", proxy));
                 }
+                if let Some(user) = &tp.username {
+                    login_args.push(format!("--user={}", user));
+                }
                 Command::new(&binary).args(&login_args).status().ok();
             }
         }
@@ -752,6 +755,9 @@ impl App {
                         if let Some(proxy) = &tp.proxy {
                             login_args.push(format!("--proxy={}", proxy));
                         }
+                        if let Some(user) = &tp.username {
+                            login_args.push(format!("--user={}", user));
+                        }
                         Command::new(&binary).args(&login_args).status().ok();
                     }
                 }
@@ -791,8 +797,13 @@ impl App {
                 // does not flush the terminal input queue when a subprocess exits,
                 // so a stray Enter from typing "exit\n" would immediately trigger
                 // another connect if we don't consume it here).
-                while crossterm::event::poll(std::time::Duration::from_millis(0))? {
-                    let _ = crossterm::event::read();
+                // Drain buffered keypresses; use unwrap_or(false) so a poll
+                // error on Linux doesn't abort TUI restore mid-flight.
+                for _ in 0..32 {
+                    match crossterm::event::poll(std::time::Duration::from_millis(0)) {
+                        Ok(true) => { let _ = crossterm::event::read(); }
+                        _ => break,
+                    }
                 }
             }
         }
